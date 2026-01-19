@@ -29,10 +29,6 @@ function createDirectoryPath(path) {
 
 const animations = [
   {
-    fileName: 'pigeon.json',
-    renderer: 'svg',
-  },
-  {
     fileName: 'banner.json',
     renderer: 'svg',
   },
