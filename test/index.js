@@ -29,10 +29,6 @@ function createDirectoryPath(path) {
 
 const animations = [
   {
-    fileName: 'pigeon.json',
-    renderer: 'svg',
-  },
-  {
     fileName: 'banner.json',
     renderer: 'svg',
   },
@@ -173,7 +169,11 @@ const startServer = async () => {
   app.listen('9999');
 };
 
-const getBrowser = async () => puppeteer.launch({ defaultViewport: null });
+const getBrowser = async () => puppeteer.launch({
+  headless: 'new',
+  defaultViewport: null,
+  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+});
 
 const startPage = async (browser, path, renderer) => {
   const targetURL = `http://localhost:9999/test/index.html\

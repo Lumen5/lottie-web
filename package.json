@@ -14,7 +14,9 @@
     "lint": "npx eslint ./player/js/**/*",
     "lint:fix": "npx eslint ./player/js/**/* --fix",
     "test:create": "node test/index.js",
-    "test:compare": "node test/index.js -s compare"
+    "test:compare": "node test/index.js -s compare",
+    "serve": "npx serve -p 3000",
+    "dev": "npm run build && npx serve -p 3000"
   },
   "keywords": [
     "animation",
