@@ -12,12 +12,12 @@ jobs:
   
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Use Node.js 16.x
-      uses: actions/cache@v2
+    - uses: actions/checkout@v4
+    - name: Use Node.js 18.x
+      uses: actions/setup-node@v4
       with:
-        path: ~/.npm
-        key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
+        node-version: 18
+        cache: 'npm'
     - run: npm install
     - run: npm run test:create
     - run: npm run build
