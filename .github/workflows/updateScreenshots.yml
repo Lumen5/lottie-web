@@ -1,7 +1,7 @@
 name: Update Screenshots
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:  # Select branch in GitHub UI when running
 
 permissions:
   contents: write
