@@ -5,6 +5,7 @@ import Matrix from '../3rd_party/transformation-matrix';
 import CanvasRendererBase from './CanvasRendererBase';
 import CVContextData from '../elements/canvasElements/CVContextData';
 import CVCompElement from '../elements/canvasElements/CVCompElement';
+import assetManager from '../utils/helpers/assetManager';
 
 function CanvasRenderer(animationItem, config) {
   this.animationItem = animationItem;
@@ -17,6 +18,54 @@ function CanvasRenderer(animationItem, config) {
     contentVisibility: (config && config.contentVisibility) || 'visible',
     className: (config && config.className) || '',
     id: (config && config.id) || '',
+    bufferManager: (() => {
+      const pool = [];
+
+      let maxWidth = 0;
+      let maxHeight = 0;
+
+      const allocate = (width, height) => {
+        reallocateIfNeeded(width, height);
+        return pool.length ? pool.pop() : assetManager.createCanvas(width, height);
+      };
+
+      const release = (canvas) => {
+        pool.push(canvas);
+      };
+
+      function reallocateIfNeeded(width, height) {
+        let needsReallocation = false;
+        if (maxWidth < width) {
+          maxWidth = width;
+          needsReallocation = true;
+        }
+        if (maxHeight < height) {
+          maxHeight = height;
+          needsReallocation = true;
+        }
+
+        if (needsReallocation) {
+          reallocate();
+        }
+      }
+
+      function reallocate() {
+        for (let i = 0; i < pool.length; i += 1) {
+          const canvas = pool[i];
+          if (canvas.width < maxWidth) {
+            canvas.width = maxWidth;
+          }
+          if (canvas.height < maxHeight) {
+            canvas.height = maxHeight;
+          }
+        }
+      }
+
+      return {
+        allocate,
+        release,
+      };
+    })(),
     runExpressions: !config || config.runExpressions === undefined || config.runExpressions,
   };
   this.renderConfig.dpr = (config && config.dpr) || 1;
