@@ -170,7 +170,7 @@ const startServer = async () => {
 };
 
 const getBrowser = async () => puppeteer.launch({
-  headless: 'new',
+  headless: true,
   defaultViewport: null,
   args: ['--no-sandbox', '--disable-setuid-sandbox'],
 });
@@ -241,7 +241,7 @@ const createIndividualAssets = async (page, folderName, settings) => {
   createDirectoryPath(filePath);
   let isLastFrame = false;
   const bridgeHelper = await (createBridgeHelper(page));
-  page.evaluate(() => {
+  await page.evaluate(() => {
     window.startProcess();
   });
   await bridgeHelper.waitForAnimationLoaded();
@@ -249,7 +249,7 @@ const createIndividualAssets = async (page, folderName, settings) => {
     // Disabling rule because execution can't be parallelized
     /* eslint-disable no-await-in-loop */
     await wait(1);
-    page.evaluate(() => {
+    await page.evaluate(() => {
         window.continueExecution();
     });
     const message = await bridgeHelper.waitForMessage();
