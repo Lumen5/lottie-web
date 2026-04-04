@@ -170,7 +170,7 @@ const startServer = async () => {
 };
 
 const getBrowser = async () => puppeteer.launch({
-  headless: 'new',
+  headless: true,
   defaultViewport: null,
   args: ['--no-sandbox', '--disable-setuid-sandbox'],
 });
@@ -297,6 +297,7 @@ async function processPage(browser, settings, directory, animation) {
     fullName = `${animation.directory}_` + fullName;
   }
   await createIndividualAssets(page, fullName, settings);
+  await page.close();
 }
 
 const iteratePages = async (browser, settings) => {
