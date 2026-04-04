@@ -30,7 +30,7 @@ function createDirectoryPath(path) {
 const animations = [
   {
     fileName: 'banner.json',
-    renderer: 'svg',
+    renderer: 'canvas',
   },
   {
     fileName: 'adrock.json',
