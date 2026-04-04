@@ -241,7 +241,7 @@ const createIndividualAssets = async (page, folderName, settings) => {
   createDirectoryPath(filePath);
   let isLastFrame = false;
   const bridgeHelper = await (createBridgeHelper(page));
-  await page.evaluate(() => {
+  page.evaluate(() => {
     window.startProcess();
   });
   await bridgeHelper.waitForAnimationLoaded();
@@ -249,7 +249,7 @@ const createIndividualAssets = async (page, folderName, settings) => {
     // Disabling rule because execution can't be parallelized
     /* eslint-disable no-await-in-loop */
     await wait(1);
-    await page.evaluate(() => {
+    page.evaluate(() => {
         window.continueExecution();
     });
     const message = await bridgeHelper.waitForMessage();
@@ -297,6 +297,7 @@ async function processPage(browser, settings, directory, animation) {
     fullName = `${animation.directory}_` + fullName;
   }
   await createIndividualAssets(page, fullName, settings);
+  await page.close();
 }
 
 const iteratePages = async (browser, settings) => {
