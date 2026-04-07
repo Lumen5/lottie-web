@@ -77,6 +77,10 @@ const animations = [
     fileName: 'data.json',
     renderer: 'svg',
   },
+  {
+    fileName: 'fabric-pattern3.json',
+    renderer: 'canvas',
+  },
 ]
 
 const getSettings = async () => {
