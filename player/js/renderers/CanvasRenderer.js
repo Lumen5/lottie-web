@@ -5,6 +5,7 @@ import Matrix from '../3rd_party/transformation-matrix';
 import CanvasRendererBase from './CanvasRendererBase';
 import CVContextData from '../elements/canvasElements/CVContextData';
 import CVCompElement from '../elements/canvasElements/CVCompElement';
+import bufferManager from '../utils/helpers/bufferManager';
 
 function CanvasRenderer(animationItem, config) {
   this.animationItem = animationItem;
@@ -17,6 +18,7 @@ function CanvasRenderer(animationItem, config) {
     contentVisibility: (config && config.contentVisibility) || 'visible',
     className: (config && config.className) || '',
     id: (config && config.id) || '',
+    bufferManager: bufferManager,
     runExpressions: !config || config.runExpressions === undefined || config.runExpressions,
   };
   this.renderConfig.dpr = (config && config.dpr) || 1;
@@ -50,6 +52,11 @@ function CanvasRenderer(animationItem, config) {
     this.ctxStroke = this.contextData.stroke.bind(this.contextData);
     this.save = this.contextData.save.bind(this.contextData);
   }
+  this.animationItem.addEventListener('error', function (event) {
+    if (event.type === 'renderFrameError') {
+      this.renderConfig.bufferManager.releaseAll();
+    }
+  }.bind(this));
 }
 extendPrototype([CanvasRendererBase], CanvasRenderer);
 

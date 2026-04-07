@@ -25,12 +25,6 @@ CVBaseElement.prototype = {
     // TODO: try to reduce the size of these buffers to the size of the composition contaning the layer
     // It might be challenging because the layer most likely is transformed in some way
     if (this.data.tt >= 1) {
-      this.buffers = [];
-      var canvasContext = this.globalData.canvasContext;
-      var bufferCanvas = assetManager.createCanvas(canvasContext.canvas.width, canvasContext.canvas.height);
-      this.buffers.push(bufferCanvas);
-      var bufferCanvas2 = assetManager.createCanvas(canvasContext.canvas.width, canvasContext.canvas.height);
-      this.buffers.push(bufferCanvas2);
       if (this.data.tt >= 3 && !document._isProxy) {
         assetManager.loadLumaCanvas();
       }
@@ -75,11 +69,11 @@ CVBaseElement.prototype = {
   },
   prepareLayer: function () {
     if (this.data.tt >= 1) {
-      var buffer = this.buffers[0];
-      var bufferCtx = buffer.getContext('2d');
-      this.clearCanvas(bufferCtx);
+      this.globalDrawingBufferCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
+      var globalDrawingBufferCanvasCtx = this.globalDrawingBufferCanvas.getContext('2d');
+      this.clearCanvas(globalDrawingBufferCanvasCtx);
       // on the first buffer we store the current state of the global drawing
-      bufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
+      globalDrawingBufferCanvasCtx.drawImage(this.canvasContext.canvas, 0, 0);
       // The next four lines are to clear the canvas
       // TODO: Check if there is a way to clear the canvas without resetting the transform
       this.currentTransform = this.canvasContext.getTransform();
@@ -90,13 +84,13 @@ CVBaseElement.prototype = {
   },
   exitLayer: function () {
     if (this.data.tt >= 1) {
-      var buffer = this.buffers[1];
+      var contentOfCurrentLayerCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
       // On the second buffer we store the current state of the global drawing
       // that only contains the content of this layer
       // (if it is a composition, it also includes the nested layers)
-      var bufferCtx = buffer.getContext('2d');
-      this.clearCanvas(bufferCtx);
-      bufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
+      var contentOfCurrentLayerCanvasCtx = contentOfCurrentLayerCanvas.getContext('2d');
+      this.clearCanvas(contentOfCurrentLayerCanvasCtx);
+      contentOfCurrentLayerCanvasCtx.drawImage(this.canvasContext.canvas, 0, 0);
       // We clear the canvas again
       this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
       this.clearCanvas(this.canvasContext);
@@ -120,14 +114,17 @@ CVBaseElement.prototype = {
         this.canvasContext.drawImage(lumaBuffer, 0, 0);
       }
       this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
-      this.canvasContext.drawImage(buffer, 0, 0);
+      this.canvasContext.drawImage(contentOfCurrentLayerCanvas, 0, 0);
       // We finally draw the first buffer (that contains the content of the global drawing)
       // We use destination-over to draw the global drawing below the current layer
       this.canvasContext.globalCompositeOperation = 'destination-over';
-      this.canvasContext.drawImage(this.buffers[0], 0, 0);
+      this.canvasContext.drawImage(this.globalDrawingBufferCanvas, 0, 0);
       this.canvasContext.setTransform(this.currentTransform);
       // We reset the globalCompositeOperation to source-over, the standard type of operation
       this.canvasContext.globalCompositeOperation = 'source-over';
+
+      this.globalData.renderConfig.bufferManager.release(this.globalDrawingBufferCanvas);
+      this.globalData.renderConfig.bufferManager.release(contentOfCurrentLayerCanvas);
     }
   },
   renderFrame: function (forceRender) {

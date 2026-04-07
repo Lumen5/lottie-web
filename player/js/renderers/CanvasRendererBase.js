@@ -284,6 +284,7 @@ CanvasRendererBase.prototype.renderFrame = function (num, forceRender) {
       this.restore();
     }
   }
+  this.renderConfig.bufferManager.releaseAll();
 };
 
 CanvasRendererBase.prototype.buildItem = function (pos) {
