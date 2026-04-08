@@ -4732,7 +4732,7 @@
   lottie.useWebWorker = setWebWorker;
   lottie.setIDPrefix = setPrefix;
   lottie.__getFactory = getFactory;
-  lottie.version = '5.13.0';
+  lottie.version = '5.14.0';
   function checkReady() {
     if (document.readyState === 'complete') {
       clearInterval(readyStateCheckInterval);
@@ -11283,6 +11283,7 @@
     var i;
     var len = elem.data.ef ? elem.data.ef.length : 0;
     this.filters = [];
+    this.globalData = elem.globalData;
     var filterManager;
     for (i = 0; i < len; i += 1) {
       filterManager = null;
@@ -11302,9 +11303,15 @@
   CVEffects.prototype.renderFrame = function (_isFirstFrame) {
     var i;
     var len = this.filters.length;
+    var canvasContext = this.globalData.canvasContext;
+    var filterStrings = [];
     for (i = 0; i < len; i += 1) {
       this.filters[i].renderFrame(_isFirstFrame);
+      if (this.filters[i].filterString) {
+        filterStrings.push(this.filters[i].filterString);
+      }
     }
+    canvasContext.filter = filterStrings.length ? filterStrings.join(' ') : 'none';
   };
   CVEffects.prototype.getEffects = function (type) {
     var i;
@@ -11401,12 +11408,6 @@
       // TODO: try to reduce the size of these buffers to the size of the composition contaning the layer
       // It might be challenging because the layer most likely is transformed in some way
       if (this.data.tt >= 1) {
-        this.buffers = [];
-        var canvasContext = this.globalData.canvasContext;
-        var bufferCanvas = assetLoader.createCanvas(canvasContext.canvas.width, canvasContext.canvas.height);
-        this.buffers.push(bufferCanvas);
-        var bufferCanvas2 = assetLoader.createCanvas(canvasContext.canvas.width, canvasContext.canvas.height);
-        this.buffers.push(bufferCanvas2);
         if (this.data.tt >= 3 && !document._isProxy) {
           assetLoader.loadLumaCanvas();
         }
@@ -11446,11 +11447,11 @@
     },
     prepareLayer: function prepareLayer() {
       if (this.data.tt >= 1) {
-        var buffer = this.buffers[0];
-        var bufferCtx = buffer.getContext('2d');
-        this.clearCanvas(bufferCtx);
+        this.globalDrawingBufferCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
+        var globalDrawingBufferCanvasCtx = this.globalDrawingBufferCanvas.getContext('2d');
+        this.clearCanvas(globalDrawingBufferCanvasCtx);
         // on the first buffer we store the current state of the global drawing
-        bufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
+        globalDrawingBufferCanvasCtx.drawImage(this.canvasContext.canvas, 0, 0);
         // The next four lines are to clear the canvas
         // TODO: Check if there is a way to clear the canvas without resetting the transform
         this.currentTransform = this.canvasContext.getTransform();
@@ -11461,13 +11462,13 @@
     },
     exitLayer: function exitLayer() {
       if (this.data.tt >= 1) {
-        var buffer = this.buffers[1];
+        var contentOfCurrentLayerCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
         // On the second buffer we store the current state of the global drawing
         // that only contains the content of this layer
         // (if it is a composition, it also includes the nested layers)
-        var bufferCtx = buffer.getContext('2d');
-        this.clearCanvas(bufferCtx);
-        bufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
+        var contentOfCurrentLayerCanvasCtx = contentOfCurrentLayerCanvas.getContext('2d');
+        this.clearCanvas(contentOfCurrentLayerCanvasCtx);
+        contentOfCurrentLayerCanvasCtx.drawImage(this.canvasContext.canvas, 0, 0);
         // We clear the canvas again
         this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
         this.clearCanvas(this.canvasContext);
@@ -11491,14 +11492,16 @@
           this.canvasContext.drawImage(lumaBuffer, 0, 0);
         }
         this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
-        this.canvasContext.drawImage(buffer, 0, 0);
+        this.canvasContext.drawImage(contentOfCurrentLayerCanvas, 0, 0);
         // We finally draw the first buffer (that contains the content of the global drawing)
         // We use destination-over to draw the global drawing below the current layer
         this.canvasContext.globalCompositeOperation = 'destination-over';
-        this.canvasContext.drawImage(this.buffers[0], 0, 0);
+        this.canvasContext.drawImage(this.globalDrawingBufferCanvas, 0, 0);
         this.canvasContext.setTransform(this.currentTransform);
         // We reset the globalCompositeOperation to source-over, the standard type of operation
         this.canvasContext.globalCompositeOperation = 'source-over';
+        this.globalData.renderConfig.bufferManager.release(this.globalDrawingBufferCanvas);
+        this.globalData.renderConfig.bufferManager.release(contentOfCurrentLayerCanvas);
       }
     },
     renderFrame: function renderFrame(forceRender) {
@@ -12552,6 +12555,7 @@
         this.restore();
       }
     }
+    this.renderConfig.bufferManager.releaseAll();
   };
   CanvasRendererBase.prototype.buildItem = function (pos) {
     var elements = this.elements;
@@ -12835,6 +12839,57 @@
     return new CVCompElement(data, this.globalData, this);
   };
 
+  var pool = [];
+  var checkedOut = new Set();
+  var maxWidth = 0;
+  var maxHeight = 0;
+  function reallocate() {
+    for (var i = 0; i < pool.length; i += 1) {
+      var canvas = pool[i];
+      if (canvas.width < maxWidth) {
+        canvas.width = maxWidth;
+      }
+      if (canvas.height < maxHeight) {
+        canvas.height = maxHeight;
+      }
+    }
+  }
+  function reallocateIfNeeded(width, height) {
+    var needsReallocation = false;
+    if (maxWidth < width) {
+      maxWidth = width;
+      needsReallocation = true;
+    }
+    if (maxHeight < height) {
+      maxHeight = height;
+      needsReallocation = true;
+    }
+    if (needsReallocation) {
+      reallocate();
+    }
+  }
+  function allocate(width, height) {
+    reallocateIfNeeded(width, height);
+    var canvas = pool.length ? pool.pop() : assetLoader.createCanvas(width, height);
+    checkedOut.add(canvas);
+    return canvas;
+  }
+  function release(canvas) {
+    checkedOut["delete"](canvas);
+    pool.push(canvas);
+  }
+  function releaseAll() {
+    checkedOut.forEach(function (canvas) {
+      pool.push(canvas);
+    });
+    checkedOut.clear();
+  }
+  var bufferManager = {
+    allocate: allocate,
+    release: release,
+    releaseAll: releaseAll
+  };
+
   function CanvasRenderer(animationItem, config) {
     this.animationItem = animationItem;
     this.renderConfig = {
@@ -12846,6 +12901,7 @@
       contentVisibility: config && config.contentVisibility || 'visible',
       className: config && config.className || '',
       id: config && config.id || '',
+      bufferManager: bufferManager,
       runExpressions: !config || config.runExpressions === undefined || config.runExpressions
     };
     this.renderConfig.dpr = config && config.dpr || 1;
@@ -12879,6 +12935,11 @@
       this.ctxStroke = this.contextData.stroke.bind(this.contextData);
       this.save = this.contextData.save.bind(this.contextData);
     }
+    this.animationItem.addEventListener('error', function (event) {
+      if (event.type === 'renderFrameError') {
+        this.renderConfig.bufferManager.releaseAll();
+      }
+    }.bind(this));
   }
   extendPrototype([CanvasRendererBase], CanvasRenderer);
   CanvasRenderer.prototype.createComp = function (data) {
@@ -17323,6 +17384,32 @@
   }
   extendPrototype([TransformEffect], CVTransformEffect);
 
+  function CVGaussianBlurEffect(effectElements, elem) {
+    this.filterManager = effectElements;
+    this.globalData = elem.globalData;
+    this.filterString = '';
+  }
+  CVGaussianBlurEffect.prototype.renderFrame = function () {
+    // Empirical value, matching AE's blur appearance.
+    var kBlurrinessToSigma = 0.3;
+    var canvasScale = this.globalData.transformCanvas.sx;
+    var sigma = this.filterManager.effectElements[0].p.v * kBlurrinessToSigma * canvasScale;
+
+    // Dimensions mapping:
+    //
+    //   1 -> horizontal & vertical
+    //   2 -> horizontal only
+    //   3 -> vertical only
+    //
+    // The Canvas API doesn't support separate X/Y blur like SVG,
+    // so we use the maximum sigma.
+    var dimensions = this.filterManager.effectElements[1].p.v;
+    var sigmaX = dimensions == 3 ? 0 : sigma; // eslint-disable-line eqeqeq
+    var sigmaY = dimensions == 2 ? 0 : sigma; // eslint-disable-line eqeqeq
+    var maxSigma = Math.max(sigmaX, sigmaY);
+    this.filterString = maxSigma > 0 ? 'blur(' + maxSigma + 'px)' : '';
+  };
+
   // Registering renderers
   registerRenderer('canvas', CanvasRenderer);
   registerRenderer('html', HybridRenderer);
@@ -17352,6 +17439,7 @@
   registerEffect$1(28, SVGMatte3Effect, false);
   registerEffect$1(29, SVGGaussianBlurEffect, true);
   registerEffect$1(35, SVGTransformEffect, false);
+  registerEffect(29, CVGaussianBlurEffect);
   registerEffect(35, CVTransformEffect);
 
   return lottie;

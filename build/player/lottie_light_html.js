@@ -4436,7 +4436,7 @@
   lottie.useWebWorker = setWebWorker;
   lottie.setIDPrefix = setPrefix;
   lottie.__getFactory = getFactory;
-  lottie.version = '5.13.0';
+  lottie.version = '5.14.0';
   function checkReady() {
     if (document.readyState === 'complete') {
       clearInterval(readyStateCheckInterval);
@@ -10843,6 +10843,7 @@
     var i;
     var len = elem.data.ef ? elem.data.ef.length : 0;
     this.filters = [];
+    this.globalData = elem.globalData;
     var filterManager;
     for (i = 0; i < len; i += 1) {
       filterManager = null;
@@ -10862,9 +10863,15 @@
   CVEffects.prototype.renderFrame = function (_isFirstFrame) {
     var i;
     var len = this.filters.length;
+    var canvasContext = this.globalData.canvasContext;
+    var filterStrings = [];
     for (i = 0; i < len; i += 1) {
       this.filters[i].renderFrame(_isFirstFrame);
+      if (this.filters[i].filterString) {
+        filterStrings.push(this.filters[i].filterString);
+      }
     }
+    canvasContext.filter = filterStrings.length ? filterStrings.join(' ') : 'none';
   };
   CVEffects.prototype.getEffects = function (type) {
     var i;

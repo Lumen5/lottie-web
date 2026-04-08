@@ -4436,7 +4436,7 @@
   lottie.useWebWorker = setWebWorker;
   lottie.setIDPrefix = setPrefix;
   lottie.__getFactory = getFactory;
-  lottie.version = '5.13.0';
+  lottie.version = '5.14.0';
   function checkReady() {
     if (document.readyState === 'complete') {
       clearInterval(readyStateCheckInterval);
