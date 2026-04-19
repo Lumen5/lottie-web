@@ -29,6 +29,10 @@ function createDirectoryPath(path) {
 
 const animations = [
   {
+    fileName: 'happy.json',
+    renderer: 'canvas',
+  },
+  {
     fileName: 'adrock.json',
     renderer: 'canvas',
   },
