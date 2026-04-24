@@ -118,9 +118,7 @@ CVBaseElement.prototype = {
       // overlapping shapes within the layer are treated as an isolated group,
       // matching SVG's group-opacity semantics.
       var prevAlpha = this.canvasContext.globalAlpha;
-      if (this.finalTransform.localOpacity < 1) {
-        this.canvasContext.globalAlpha = this.finalTransform.localOpacity;
-      }
+      this.canvasContext.globalAlpha = prevAlpha * this.finalTransform.localOpacity;
       this.canvasContext.drawImage(contentOfCurrentLayerCanvas, 0, 0);
       this.canvasContext.globalAlpha = prevAlpha;
       // We finally draw the first buffer (that contains the content of the global drawing)
