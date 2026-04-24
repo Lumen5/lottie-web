@@ -125,7 +125,15 @@ export type HTMLRendererConfig = BaseRendererConfig & {
     hideOnTransparent?: boolean;
 };
 
-export type RendererType = 'svg' | 'canvas' | 'html';
+export type WebGLRendererConfig = BaseRendererConfig & {
+    clearCanvas?: boolean;
+    context?: WebGLRenderingContext;
+    progressiveLoad?: boolean;
+    preserveAspectRatio?: string;
+    dpr?: number;
+};
+
+export type RendererType = 'svg' | 'canvas' | 'html' | 'webgl';
 
 export type AnimationConfig<T extends RendererType = 'svg'> = {
     container: Element;
@@ -139,6 +147,7 @@ export type AnimationConfig<T extends RendererType = 'svg'> = {
         svg: SVGRendererConfig;
         canvas: CanvasRendererConfig;
         html: HTMLRendererConfig;
+        webgl: WebGLRendererConfig;
     }[T]
     audioFactory?(assetPath: string): {
         play(): void

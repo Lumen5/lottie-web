@@ -7473,7 +7473,7 @@
     return ob;
   }();
 
-  var registeredEffects = {};
+  var registeredEffects$1 = {};
   var idPrefix = 'filter_result_';
   function SVGEffects(elem) {
     var i;
@@ -7487,11 +7487,11 @@
     for (i = 0; i < len; i += 1) {
       filterManager = null;
       var type = elem.data.ef[i].ty;
-      if (registeredEffects[type]) {
-        var Effect = registeredEffects[type].effect;
+      if (registeredEffects$1[type]) {
+        var Effect = registeredEffects$1[type].effect;
         filterManager = new Effect(fil, elem.effectsManager.effectElements[i], elem, idPrefix + count, source);
         source = idPrefix + count;
-        if (registeredEffects[type].countsAsEffect) {
+        if (registeredEffects$1[type].countsAsEffect) {
           count += 1;
         }
       }
@@ -7525,8 +7525,8 @@
     }
     return effects;
   };
-  function registerEffect(id, effect, countsAsEffect) {
-    registeredEffects[id] = {
+  function registerEffect$1(id, effect, countsAsEffect) {
+    registeredEffects$1[id] = {
       effect: effect,
       countsAsEffect: countsAsEffect
     };
@@ -10838,8 +10838,2196 @@
     return new SVGCompElement(data, this.globalData, this);
   };
 
+  function ShapeTransformManager() {
+    this.sequences = {};
+    this.sequenceList = [];
+    this.transform_key_count = 0;
+  }
+  ShapeTransformManager.prototype = {
+    addTransformSequence: function addTransformSequence(transforms) {
+      var i;
+      var len = transforms.length;
+      var key = '_';
+      for (i = 0; i < len; i += 1) {
+        key += transforms[i].transform.key + '_';
+      }
+      var sequence = this.sequences[key];
+      if (!sequence) {
+        sequence = {
+          transforms: [].concat(transforms),
+          finalTransform: new Matrix(),
+          _mdf: false
+        };
+        this.sequences[key] = sequence;
+        this.sequenceList.push(sequence);
+      }
+      return sequence;
+    },
+    processSequence: function processSequence(sequence, isFirstFrame) {
+      var i = 0;
+      var len = sequence.transforms.length;
+      var _mdf = isFirstFrame;
+      while (i < len && !isFirstFrame) {
+        if (sequence.transforms[i].transform.mProps._mdf) {
+          _mdf = true;
+          break;
+        }
+        i += 1;
+      }
+      if (_mdf) {
+        sequence.finalTransform.reset();
+        for (i = len - 1; i >= 0; i -= 1) {
+          sequence.finalTransform.multiply(sequence.transforms[i].transform.mProps.v);
+        }
+      }
+      sequence._mdf = _mdf;
+    },
+    processSequences: function processSequences(isFirstFrame) {
+      var i;
+      var len = this.sequenceList.length;
+      for (i = 0; i < len; i += 1) {
+        this.processSequence(this.sequenceList[i], isFirstFrame);
+      }
+    },
+    getNewKey: function getNewKey() {
+      this.transform_key_count += 1;
+      return '_' + this.transform_key_count;
+    }
+  };
+
+  var lumaLoader = function lumaLoader() {
+    var id = '__lottie_element_luma_buffer';
+    var lumaBuffer = null;
+    var lumaBufferCtx = null;
+    var svg = null;
+
+    // This alternate solution has a slight delay before the filter is applied, resulting in a flicker on the first frame.
+    // Keeping this here for reference, and in the future, if offscreen canvas supports url filters, this can be used.
+    // For now, neither of them work for offscreen canvas, so canvas workers can't support the luma track matte mask.
+    // Naming it solution 2 to mark the extra comment lines.
+    /*
+    var svgString = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      '<filter id="' + id + '">',
+      '<feColorMatrix type="matrix" color-interpolation-filters="sRGB" values="',
+      '0.3, 0.3, 0.3, 0, 0, ',
+      '0.3, 0.3, 0.3, 0, 0, ',
+      '0.3, 0.3, 0.3, 0, 0, ',
+      '0.3, 0.3, 0.3, 0, 0',
+      '"/>',
+      '</filter>',
+      '</svg>',
+    ].join('');
+    var blob = new Blob([svgString], { type: 'image/svg+xml' });
+    var url = URL.createObjectURL(blob);
+    */
+
+    function createLumaSvgFilter() {
+      var _svg = createNS('svg');
+      var fil = createNS('filter');
+      var matrix = createNS('feColorMatrix');
+      fil.setAttribute('id', id);
+      matrix.setAttribute('type', 'matrix');
+      matrix.setAttribute('color-interpolation-filters', 'sRGB');
+      matrix.setAttribute('values', '0.3, 0.3, 0.3, 0, 0, 0.3, 0.3, 0.3, 0, 0, 0.3, 0.3, 0.3, 0, 0, 0.3, 0.3, 0.3, 0, 0');
+      fil.appendChild(matrix);
+      _svg.appendChild(fil);
+      _svg.setAttribute('id', id + '_svg');
+      if (featureSupport.svgLumaHidden) {
+        _svg.style.display = 'none';
+      }
+      return _svg;
+    }
+    function loadLuma() {
+      if (!lumaBuffer) {
+        svg = createLumaSvgFilter();
+        document.body.appendChild(svg);
+        lumaBuffer = createTag('canvas');
+        lumaBufferCtx = lumaBuffer.getContext('2d');
+        // lumaBufferCtx.filter = `url('${url}#__lottie_element_luma_buffer')`; // part of solution 2
+        lumaBufferCtx.filter = 'url(#' + id + ')';
+        lumaBufferCtx.fillStyle = 'rgba(0,0,0,0)';
+        lumaBufferCtx.fillRect(0, 0, 1, 1);
+      }
+    }
+    function getLuma(canvas) {
+      if (!lumaBuffer) {
+        loadLuma();
+      }
+      lumaBuffer.width = canvas.width;
+      lumaBuffer.height = canvas.height;
+      // lumaBufferCtx.filter = `url('${url}#__lottie_element_luma_buffer')`; // part of solution 2
+      lumaBufferCtx.filter = 'url(#' + id + ')';
+      return lumaBuffer;
+    }
+    return {
+      load: loadLuma,
+      get: getLuma
+    };
+  };
+  function createCanvas(width, height) {
+    if (featureSupport.offscreenCanvas) {
+      return new OffscreenCanvas(width, height);
+    }
+    var canvas = createTag('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+  var assetLoader = function () {
+    return {
+      loadLumaCanvas: lumaLoader.load,
+      getLumaCanvas: lumaLoader.get,
+      createCanvas: createCanvas
+    };
+  }();
+
+  var registeredEffects = {};
+  function CVEffects(elem) {
+    var i;
+    var len = elem.data.ef ? elem.data.ef.length : 0;
+    this.filters = [];
+    this.globalData = elem.globalData;
+    var filterManager;
+    for (i = 0; i < len; i += 1) {
+      filterManager = null;
+      var type = elem.data.ef[i].ty;
+      if (registeredEffects[type]) {
+        var Effect = registeredEffects[type].effect;
+        filterManager = new Effect(elem.effectsManager.effectElements[i], elem);
+      }
+      if (filterManager) {
+        this.filters.push(filterManager);
+      }
+    }
+    if (this.filters.length) {
+      elem.addRenderableComponent(this);
+    }
+  }
+  CVEffects.prototype.renderFrame = function (_isFirstFrame) {
+    var i;
+    var len = this.filters.length;
+    var canvasContext = this.globalData.canvasContext;
+    var filterStrings = [];
+    for (i = 0; i < len; i += 1) {
+      this.filters[i].renderFrame(_isFirstFrame);
+      if (this.filters[i].filterString) {
+        filterStrings.push(this.filters[i].filterString);
+      }
+    }
+    canvasContext.filter = filterStrings.length ? filterStrings.join(' ') : 'none';
+  };
+  CVEffects.prototype.getEffects = function (type) {
+    var i;
+    var len = this.filters.length;
+    var effects = [];
+    for (i = 0; i < len; i += 1) {
+      if (this.filters[i].type === type) {
+        effects.push(this.filters[i]);
+      }
+    }
+    return effects;
+  };
+  function registerEffect(id, effect) {
+    registeredEffects[id] = {
+      effect: effect
+    };
+  }
+
+  function CVMaskElement(data, element) {
+    this.data = data;
+    this.element = element;
+    this.masksProperties = this.data.masksProperties || [];
+    this.viewData = createSizedArray(this.masksProperties.length);
+    var i;
+    var len = this.masksProperties.length;
+    var hasMasks = false;
+    for (i = 0; i < len; i += 1) {
+      if (this.masksProperties[i].mode !== 'n') {
+        hasMasks = true;
+      }
+      this.viewData[i] = ShapePropertyFactory.getShapeProp(this.element, this.masksProperties[i], 3);
+    }
+    this.hasMasks = hasMasks;
+    if (hasMasks) {
+      this.element.addRenderableComponent(this);
+    }
+  }
+  CVMaskElement.prototype.renderFrame = function () {
+    if (!this.hasMasks) {
+      return;
+    }
+    var transform = this.element.finalTransform.mat;
+    var ctx = this.element.canvasContext;
+    var i;
+    var len = this.masksProperties.length;
+    var pt;
+    var pts;
+    var data;
+    ctx.beginPath();
+    for (i = 0; i < len; i += 1) {
+      if (this.masksProperties[i].mode !== 'n') {
+        if (this.masksProperties[i].inv) {
+          ctx.moveTo(0, 0);
+          ctx.lineTo(this.element.globalData.compSize.w, 0);
+          ctx.lineTo(this.element.globalData.compSize.w, this.element.globalData.compSize.h);
+          ctx.lineTo(0, this.element.globalData.compSize.h);
+          ctx.lineTo(0, 0);
+        }
+        data = this.viewData[i].v;
+        pt = transform.applyToPointArray(data.v[0][0], data.v[0][1], 0);
+        ctx.moveTo(pt[0], pt[1]);
+        var j;
+        var jLen = data._length;
+        for (j = 1; j < jLen; j += 1) {
+          pts = transform.applyToTriplePoints(data.o[j - 1], data.i[j], data.v[j]);
+          ctx.bezierCurveTo(pts[0], pts[1], pts[2], pts[3], pts[4], pts[5]);
+        }
+        pts = transform.applyToTriplePoints(data.o[j - 1], data.i[0], data.v[0]);
+        ctx.bezierCurveTo(pts[0], pts[1], pts[2], pts[3], pts[4], pts[5]);
+      }
+    }
+    this.element.globalData.renderer.save(true);
+    ctx.clip();
+  };
+  CVMaskElement.prototype.getMaskProperty = MaskElement.prototype.getMaskProperty;
+  CVMaskElement.prototype.destroy = function () {
+    this.element = null;
+  };
+
+  function CVBaseElement() {}
+  var operationsMap = {
+    1: 'source-in',
+    2: 'source-out',
+    3: 'source-in',
+    4: 'source-out'
+  };
+  CVBaseElement.prototype = {
+    createElements: function createElements() {},
+    initRendererElement: function initRendererElement() {},
+    createContainerElements: function createContainerElements() {
+      // If the layer is masked we will use two buffers to store each different states of the drawing
+      // This solution is not ideal for several reason. But unfortunately, because of the recursive
+      // nature of the render tree, it's the only simple way to make sure one inner mask doesn't override an outer mask.
+      // TODO: try to reduce the size of these buffers to the size of the composition contaning the layer
+      // It might be challenging because the layer most likely is transformed in some way
+      if (this.data.tt >= 1) {
+        if (this.data.tt >= 3 && !document._isProxy) {
+          assetLoader.loadLumaCanvas();
+        }
+      }
+      this.canvasContext = this.globalData.canvasContext;
+      this.transformCanvas = this.globalData.transformCanvas;
+      this.renderableEffectsManager = new CVEffects(this);
+      this.searchEffectTransforms();
+    },
+    createContent: function createContent() {},
+    setBlendMode: function setBlendMode() {
+      var globalData = this.globalData;
+      if (globalData.blendMode !== this.data.bm) {
+        globalData.blendMode = this.data.bm;
+        var blendModeValue = getBlendMode(this.data.bm);
+        globalData.canvasContext.globalCompositeOperation = blendModeValue;
+      }
+    },
+    createRenderableComponents: function createRenderableComponents() {
+      this.maskManager = new CVMaskElement(this.data, this);
+      this.transformEffects = this.renderableEffectsManager.getEffects(effectTypes.TRANSFORM_EFFECT);
+    },
+    hideElement: function hideElement() {
+      if (!this.hidden && (!this.isInRange || this.isTransparent)) {
+        this.hidden = true;
+      }
+    },
+    showElement: function showElement() {
+      if (this.isInRange && !this.isTransparent) {
+        this.hidden = false;
+        this._isFirstFrame = true;
+        this.maskManager._isFirstFrame = true;
+      }
+    },
+    clearCanvas: function clearCanvas(canvasContext) {
+      canvasContext.clearRect(this.transformCanvas.tx, this.transformCanvas.ty, this.transformCanvas.w * this.transformCanvas.sx, this.transformCanvas.h * this.transformCanvas.sy);
+    },
+    prepareLayer: function prepareLayer() {
+      if (this.data.tt >= 1) {
+        this.globalDrawingBufferCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
+        var globalDrawingBufferCanvasCtx = this.globalDrawingBufferCanvas.getContext('2d');
+        this.clearCanvas(globalDrawingBufferCanvasCtx);
+        // on the first buffer we store the current state of the global drawing
+        globalDrawingBufferCanvasCtx.drawImage(this.canvasContext.canvas, 0, 0);
+        // The next four lines are to clear the canvas
+        // TODO: Check if there is a way to clear the canvas without resetting the transform
+        this.currentTransform = this.canvasContext.getTransform();
+        this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
+        this.clearCanvas(this.canvasContext);
+        this.canvasContext.setTransform(this.currentTransform);
+      }
+    },
+    exitLayer: function exitLayer() {
+      if (this.data.tt >= 1) {
+        var contentOfCurrentLayerCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
+        // On the second buffer we store the current state of the global drawing
+        // that only contains the content of this layer
+        // (if it is a composition, it also includes the nested layers)
+        var contentOfCurrentLayerCanvasCtx = contentOfCurrentLayerCanvas.getContext('2d');
+        this.clearCanvas(contentOfCurrentLayerCanvasCtx);
+        contentOfCurrentLayerCanvasCtx.drawImage(this.canvasContext.canvas, 0, 0);
+        // We clear the canvas again
+        this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
+        this.clearCanvas(this.canvasContext);
+        this.canvasContext.setTransform(this.currentTransform);
+        // We draw the mask
+        var mask = this.comp.getElementById('tp' in this.data ? this.data.tp : this.data.ind - 1);
+        mask.renderFrame(true);
+        // We draw the second buffer (that contains the content of this layer)
+        this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
+
+        // If the mask is a Luma matte, we need to do two extra painting operations
+        // the _isProxy check is to avoid drawing a fake canvas in workers that will throw an error
+        if (this.data.tt >= 3 && !document._isProxy) {
+          // We copy the painted mask to a buffer that has a color matrix filter applied to it
+          // that applies the rgb values to the alpha channel
+          var lumaBuffer = assetLoader.getLumaCanvas(this.canvasContext.canvas);
+          var lumaBufferCtx = lumaBuffer.getContext('2d');
+          lumaBufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
+          this.clearCanvas(this.canvasContext);
+          // we repaint the context with the mask applied to it
+          this.canvasContext.drawImage(lumaBuffer, 0, 0);
+        }
+        this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
+        // The layer opacity is applied here (not during child rendering) so that
+        // overlapping shapes within the layer are treated as an isolated group,
+        // matching SVG's group-opacity semantics.
+        var prevAlpha = this.canvasContext.globalAlpha;
+        this.canvasContext.globalAlpha = prevAlpha * this.finalTransform.localOpacity;
+        this.canvasContext.drawImage(contentOfCurrentLayerCanvas, 0, 0);
+        this.canvasContext.globalAlpha = prevAlpha;
+        // We finally draw the first buffer (that contains the content of the global drawing)
+        // We use destination-over to draw the global drawing below the current layer
+        this.canvasContext.globalCompositeOperation = 'destination-over';
+        this.canvasContext.drawImage(this.globalDrawingBufferCanvas, 0, 0);
+        this.canvasContext.setTransform(this.currentTransform);
+        // We reset the globalCompositeOperation to source-over, the standard type of operation
+        this.canvasContext.globalCompositeOperation = 'source-over';
+        this.globalData.renderConfig.bufferManager.release(this.globalDrawingBufferCanvas);
+        this.globalData.renderConfig.bufferManager.release(contentOfCurrentLayerCanvas);
+      }
+    },
+    renderFrame: function renderFrame(forceRender) {
+      if (this.hidden || this.data.hd) {
+        return;
+      }
+      if (this.data.td === 1 && !forceRender) {
+        return;
+      }
+      this.renderTransform();
+      this.renderRenderable();
+      this.renderLocalTransform();
+      this.setBlendMode();
+      var forceRealStack = this.data.ty === 0;
+      this.prepareLayer();
+      this.globalData.renderer.save(forceRealStack);
+      this.globalData.renderer.ctxTransform(this.finalTransform.localMat.props);
+      if (!(this.data.tt >= 1)) {
+        this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
+      }
+      this.renderInnerContent();
+      this.globalData.renderer.restore(forceRealStack);
+      this.exitLayer();
+      if (this.maskManager.hasMasks) {
+        this.globalData.renderer.restore(true);
+      }
+      if (this._isFirstFrame) {
+        this._isFirstFrame = false;
+      }
+    },
+    destroy: function destroy() {
+      this.canvasContext = null;
+      this.data = null;
+      this.globalData = null;
+      this.maskManager.destroy();
+    },
+    mHelper: new Matrix()
+  };
+  CVBaseElement.prototype.hide = CVBaseElement.prototype.hideElement;
+  CVBaseElement.prototype.show = CVBaseElement.prototype.showElement;
+
+  function CVShapeData(element, data, styles, transformsManager) {
+    this.styledShapes = [];
+    this.tr = [0, 0, 0, 0, 0, 0];
+    var ty = 4;
+    if (data.ty === 'rc') {
+      ty = 5;
+    } else if (data.ty === 'el') {
+      ty = 6;
+    } else if (data.ty === 'sr') {
+      ty = 7;
+    }
+    this.sh = ShapePropertyFactory.getShapeProp(element, data, ty, element);
+    var i;
+    var len = styles.length;
+    var styledShape;
+    for (i = 0; i < len; i += 1) {
+      if (!styles[i].closed) {
+        styledShape = {
+          transforms: transformsManager.addTransformSequence(styles[i].transforms),
+          trNodes: []
+        };
+        this.styledShapes.push(styledShape);
+        styles[i].elements.push(styledShape);
+      }
+    }
+  }
+  CVShapeData.prototype.setAsAnimated = SVGShapeData.prototype.setAsAnimated;
+
+  function CVShapeElement(data, globalData, comp) {
+    this.shapes = [];
+    this.shapesData = data.shapes;
+    this.stylesList = [];
+    this.itemsData = [];
+    this.prevViewData = [];
+    this.shapeModifiers = [];
+    this.processedElements = [];
+    this.transformsManager = new ShapeTransformManager();
+    this.initElement(data, globalData, comp);
+  }
+  extendPrototype([BaseElement, TransformElement, CVBaseElement, IShapeElement, HierarchyElement, FrameElement, RenderableElement], CVShapeElement);
+  CVShapeElement.prototype.initElement = RenderableDOMElement.prototype.initElement;
+  CVShapeElement.prototype.transformHelper = {
+    opacity: 1,
+    _opMdf: false
+  };
+  CVShapeElement.prototype.dashResetter = [];
+  CVShapeElement.prototype.createContent = function () {
+    this.searchShapes(this.shapesData, this.itemsData, this.prevViewData, true, []);
+  };
+  CVShapeElement.prototype.createStyleElement = function (data, transforms) {
+    var styleElem = {
+      data: data,
+      type: data.ty,
+      preTransforms: this.transformsManager.addTransformSequence(transforms),
+      transforms: [],
+      elements: [],
+      closed: data.hd === true
+    };
+    var elementData = {};
+    if (data.ty === 'fl' || data.ty === 'st') {
+      elementData.c = PropertyFactory.getProp(this, data.c, 1, 255, this);
+      if (!elementData.c.k) {
+        styleElem.co = 'rgb(' + bmFloor(elementData.c.v[0]) + ',' + bmFloor(elementData.c.v[1]) + ',' + bmFloor(elementData.c.v[2]) + ')';
+      }
+    } else if (data.ty === 'gf' || data.ty === 'gs') {
+      elementData.s = PropertyFactory.getProp(this, data.s, 1, null, this);
+      elementData.e = PropertyFactory.getProp(this, data.e, 1, null, this);
+      elementData.h = PropertyFactory.getProp(this, data.h || {
+        k: 0
+      }, 0, 0.01, this);
+      elementData.a = PropertyFactory.getProp(this, data.a || {
+        k: 0
+      }, 0, degToRads, this);
+      elementData.g = new GradientProperty(this, data.g, this);
+    }
+    elementData.o = PropertyFactory.getProp(this, data.o, 0, 0.01, this);
+    if (data.ty === 'st' || data.ty === 'gs') {
+      styleElem.lc = lineCapEnum[data.lc || 2];
+      styleElem.lj = lineJoinEnum[data.lj || 2];
+      if (data.lj == 1) {
+        // eslint-disable-line eqeqeq
+        styleElem.ml = data.ml;
+      }
+      elementData.w = PropertyFactory.getProp(this, data.w, 0, null, this);
+      if (!elementData.w.k) {
+        styleElem.wi = elementData.w.v;
+      }
+      if (data.d) {
+        var d = new DashProperty(this, data.d, 'canvas', this);
+        elementData.d = d;
+        if (!elementData.d.k) {
+          styleElem.da = elementData.d.dashArray;
+          styleElem["do"] = elementData.d.dashoffset[0];
+        }
+      }
+    } else {
+      styleElem.r = data.r === 2 ? 'evenodd' : 'nonzero';
+    }
+    this.stylesList.push(styleElem);
+    elementData.style = styleElem;
+    return elementData;
+  };
+  CVShapeElement.prototype.createGroupElement = function () {
+    var elementData = {
+      it: [],
+      prevViewData: []
+    };
+    return elementData;
+  };
+  CVShapeElement.prototype.createTransformElement = function (data) {
+    var elementData = {
+      transform: {
+        opacity: 1,
+        _opMdf: false,
+        key: this.transformsManager.getNewKey(),
+        op: PropertyFactory.getProp(this, data.o, 0, 0.01, this),
+        mProps: TransformPropertyFactory.getTransformProperty(this, data, this)
+      }
+    };
+    return elementData;
+  };
+  CVShapeElement.prototype.createShapeElement = function (data) {
+    var elementData = new CVShapeData(this, data, this.stylesList, this.transformsManager);
+    this.shapes.push(elementData);
+    this.addShapeToModifiers(elementData);
+    return elementData;
+  };
+  CVShapeElement.prototype.reloadShapes = function () {
+    this._isFirstFrame = true;
+    var i;
+    var len = this.itemsData.length;
+    for (i = 0; i < len; i += 1) {
+      this.prevViewData[i] = this.itemsData[i];
+    }
+    this.searchShapes(this.shapesData, this.itemsData, this.prevViewData, true, []);
+    len = this.dynamicProperties.length;
+    for (i = 0; i < len; i += 1) {
+      this.dynamicProperties[i].getValue();
+    }
+    this.renderModifiers();
+    this.transformsManager.processSequences(this._isFirstFrame);
+  };
+  CVShapeElement.prototype.addTransformToStyleList = function (transform) {
+    var i;
+    var len = this.stylesList.length;
+    for (i = 0; i < len; i += 1) {
+      if (!this.stylesList[i].closed) {
+        this.stylesList[i].transforms.push(transform);
+      }
+    }
+  };
+  CVShapeElement.prototype.removeTransformFromStyleList = function () {
+    var i;
+    var len = this.stylesList.length;
+    for (i = 0; i < len; i += 1) {
+      if (!this.stylesList[i].closed) {
+        this.stylesList[i].transforms.pop();
+      }
+    }
+  };
+  CVShapeElement.prototype.closeStyles = function (styles) {
+    var i;
+    var len = styles.length;
+    for (i = 0; i < len; i += 1) {
+      styles[i].closed = true;
+    }
+  };
+  CVShapeElement.prototype.searchShapes = function (arr, itemsData, prevViewData, shouldRender, transforms) {
+    var i;
+    var len = arr.length - 1;
+    var j;
+    var jLen;
+    var ownStyles = [];
+    var ownModifiers = [];
+    var processedPos;
+    var modifier;
+    var currentTransform;
+    var ownTransforms = [].concat(transforms);
+    for (i = len; i >= 0; i -= 1) {
+      processedPos = this.searchProcessedElement(arr[i]);
+      if (!processedPos) {
+        arr[i]._shouldRender = shouldRender;
+      } else {
+        itemsData[i] = prevViewData[processedPos - 1];
+      }
+      if (arr[i].ty === 'fl' || arr[i].ty === 'st' || arr[i].ty === 'gf' || arr[i].ty === 'gs') {
+        if (!processedPos) {
+          itemsData[i] = this.createStyleElement(arr[i], ownTransforms);
+        } else {
+          itemsData[i].style.closed = false;
+        }
+        ownStyles.push(itemsData[i].style);
+      } else if (arr[i].ty === 'gr') {
+        if (!processedPos) {
+          itemsData[i] = this.createGroupElement(arr[i]);
+        } else {
+          jLen = itemsData[i].it.length;
+          for (j = 0; j < jLen; j += 1) {
+            itemsData[i].prevViewData[j] = itemsData[i].it[j];
+          }
+        }
+        this.searchShapes(arr[i].it, itemsData[i].it, itemsData[i].prevViewData, shouldRender, ownTransforms);
+      } else if (arr[i].ty === 'tr') {
+        if (!processedPos) {
+          currentTransform = this.createTransformElement(arr[i]);
+          itemsData[i] = currentTransform;
+        }
+        ownTransforms.push(itemsData[i]);
+        this.addTransformToStyleList(itemsData[i]);
+      } else if (arr[i].ty === 'sh' || arr[i].ty === 'rc' || arr[i].ty === 'el' || arr[i].ty === 'sr') {
+        if (!processedPos) {
+          itemsData[i] = this.createShapeElement(arr[i]);
+        }
+      } else if (arr[i].ty === 'tm' || arr[i].ty === 'rd' || arr[i].ty === 'pb' || arr[i].ty === 'zz' || arr[i].ty === 'op') {
+        if (!processedPos) {
+          modifier = ShapeModifiers.getModifier(arr[i].ty);
+          modifier.init(this, arr[i]);
+          itemsData[i] = modifier;
+          this.shapeModifiers.push(modifier);
+        } else {
+          modifier = itemsData[i];
+          modifier.closed = false;
+        }
+        ownModifiers.push(modifier);
+      } else if (arr[i].ty === 'rp') {
+        if (!processedPos) {
+          modifier = ShapeModifiers.getModifier(arr[i].ty);
+          itemsData[i] = modifier;
+          modifier.init(this, arr, i, itemsData);
+          this.shapeModifiers.push(modifier);
+          shouldRender = false;
+        } else {
+          modifier = itemsData[i];
+          modifier.closed = true;
+        }
+        ownModifiers.push(modifier);
+      }
+      this.addProcessedElement(arr[i], i + 1);
+    }
+    this.removeTransformFromStyleList();
+    this.closeStyles(ownStyles);
+    len = ownModifiers.length;
+    for (i = 0; i < len; i += 1) {
+      ownModifiers[i].closed = true;
+    }
+  };
+  CVShapeElement.prototype.renderInnerContent = function () {
+    this.transformHelper.opacity = 1;
+    this.transformHelper._opMdf = false;
+    this.renderModifiers();
+    this.transformsManager.processSequences(this._isFirstFrame);
+    this.renderShape(this.transformHelper, this.shapesData, this.itemsData, true);
+  };
+  CVShapeElement.prototype.renderShapeTransform = function (parentTransform, groupTransform) {
+    if (parentTransform._opMdf || groupTransform.op._mdf || this._isFirstFrame) {
+      groupTransform.opacity = parentTransform.opacity;
+      groupTransform.opacity *= groupTransform.op.v;
+      groupTransform._opMdf = true;
+    }
+  };
+  CVShapeElement.prototype.drawLayer = function () {
+    var i;
+    var len = this.stylesList.length;
+    var j;
+    var jLen;
+    var k;
+    var kLen;
+    var elems;
+    var nodes;
+    var renderer = this.globalData.renderer;
+    var ctx = this.globalData.canvasContext;
+    var type;
+    var currentStyle;
+    for (i = 0; i < len; i += 1) {
+      currentStyle = this.stylesList[i];
+      type = currentStyle.type;
+
+      // Skipping style when
+      // Stroke width equals 0
+      // style should not be rendered (extra unused repeaters)
+      // current opacity equals 0
+      // global opacity equals 0
+      if (!((type === 'st' || type === 'gs') && currentStyle.wi === 0 || !currentStyle.data._shouldRender || currentStyle.coOp === 0 || this.globalData.currentGlobalAlpha === 0)) {
+        renderer.save();
+        elems = currentStyle.elements;
+        if (type === 'st' || type === 'gs') {
+          renderer.ctxStrokeStyle(type === 'st' ? currentStyle.co : currentStyle.grd);
+          // ctx.strokeStyle = type === 'st' ? currentStyle.co : currentStyle.grd;
+          renderer.ctxLineWidth(currentStyle.wi);
+          // ctx.lineWidth = currentStyle.wi;
+          renderer.ctxLineCap(currentStyle.lc);
+          // ctx.lineCap = currentStyle.lc;
+          renderer.ctxLineJoin(currentStyle.lj);
+          // ctx.lineJoin = currentStyle.lj;
+          renderer.ctxMiterLimit(currentStyle.ml || 0);
+          // ctx.miterLimit = currentStyle.ml || 0;
+        } else {
+          renderer.ctxFillStyle(type === 'fl' ? currentStyle.co : currentStyle.grd);
+          // ctx.fillStyle = type === 'fl' ? currentStyle.co : currentStyle.grd;
+        }
+        renderer.ctxOpacity(currentStyle.coOp);
+        if (type !== 'st' && type !== 'gs') {
+          ctx.beginPath();
+        }
+        renderer.ctxTransform(currentStyle.preTransforms.finalTransform.props);
+        jLen = elems.length;
+        for (j = 0; j < jLen; j += 1) {
+          if (type === 'st' || type === 'gs') {
+            ctx.beginPath();
+            if (currentStyle.da) {
+              ctx.setLineDash(currentStyle.da);
+              ctx.lineDashOffset = currentStyle["do"];
+            }
+          }
+          nodes = elems[j].trNodes;
+          kLen = nodes.length;
+          for (k = 0; k < kLen; k += 1) {
+            if (nodes[k].t === 'm') {
+              ctx.moveTo(nodes[k].p[0], nodes[k].p[1]);
+            } else if (nodes[k].t === 'c') {
+              ctx.bezierCurveTo(nodes[k].pts[0], nodes[k].pts[1], nodes[k].pts[2], nodes[k].pts[3], nodes[k].pts[4], nodes[k].pts[5]);
+            } else {
+              ctx.closePath();
+            }
+          }
+          if (type === 'st' || type === 'gs') {
+            // ctx.stroke();
+            renderer.ctxStroke();
+            if (currentStyle.da) {
+              ctx.setLineDash(this.dashResetter);
+            }
+          }
+        }
+        if (type !== 'st' && type !== 'gs') {
+          // ctx.fill(currentStyle.r);
+          this.globalData.renderer.ctxFill(currentStyle.r);
+        }
+        renderer.restore();
+      }
+    }
+  };
+  CVShapeElement.prototype.renderShape = function (parentTransform, items, data, isMain) {
+    var i;
+    var len = items.length - 1;
+    var groupTransform;
+    groupTransform = parentTransform;
+    for (i = len; i >= 0; i -= 1) {
+      if (items[i].ty === 'tr') {
+        groupTransform = data[i].transform;
+        this.renderShapeTransform(parentTransform, groupTransform);
+      } else if (items[i].ty === 'sh' || items[i].ty === 'el' || items[i].ty === 'rc' || items[i].ty === 'sr') {
+        this.renderPath(items[i], data[i]);
+      } else if (items[i].ty === 'fl') {
+        this.renderFill(items[i], data[i], groupTransform);
+      } else if (items[i].ty === 'st') {
+        this.renderStroke(items[i], data[i], groupTransform);
+      } else if (items[i].ty === 'gf' || items[i].ty === 'gs') {
+        this.renderGradientFill(items[i], data[i], groupTransform);
+      } else if (items[i].ty === 'gr') {
+        this.renderShape(groupTransform, items[i].it, data[i].it);
+      } else if (items[i].ty === 'tm') {
+        //
+      }
+    }
+    if (isMain) {
+      this.drawLayer();
+    }
+  };
+  CVShapeElement.prototype.renderStyledShape = function (styledShape, shape) {
+    if (this._isFirstFrame || shape._mdf || styledShape.transforms._mdf) {
+      var shapeNodes = styledShape.trNodes;
+      var paths = shape.paths;
+      var i;
+      var len;
+      var j;
+      var jLen = paths._length;
+      shapeNodes.length = 0;
+      var groupTransformMat = styledShape.transforms.finalTransform;
+      for (j = 0; j < jLen; j += 1) {
+        var pathNodes = paths.shapes[j];
+        if (pathNodes && pathNodes.v) {
+          len = pathNodes._length;
+          for (i = 1; i < len; i += 1) {
+            if (i === 1) {
+              shapeNodes.push({
+                t: 'm',
+                p: groupTransformMat.applyToPointArray(pathNodes.v[0][0], pathNodes.v[0][1], 0)
+              });
+            }
+            shapeNodes.push({
+              t: 'c',
+              pts: groupTransformMat.applyToTriplePoints(pathNodes.o[i - 1], pathNodes.i[i], pathNodes.v[i])
+            });
+          }
+          if (len === 1) {
+            shapeNodes.push({
+              t: 'm',
+              p: groupTransformMat.applyToPointArray(pathNodes.v[0][0], pathNodes.v[0][1], 0)
+            });
+          }
+          if (pathNodes.c && len) {
+            shapeNodes.push({
+              t: 'c',
+              pts: groupTransformMat.applyToTriplePoints(pathNodes.o[i - 1], pathNodes.i[0], pathNodes.v[0])
+            });
+            shapeNodes.push({
+              t: 'z'
+            });
+          }
+        }
+      }
+      styledShape.trNodes = shapeNodes;
+    }
+  };
+  CVShapeElement.prototype.renderPath = function (pathData, itemData) {
+    if (pathData.hd !== true && pathData._shouldRender) {
+      var i;
+      var len = itemData.styledShapes.length;
+      for (i = 0; i < len; i += 1) {
+        this.renderStyledShape(itemData.styledShapes[i], itemData.sh);
+      }
+    }
+  };
+  CVShapeElement.prototype.renderFill = function (styleData, itemData, groupTransform) {
+    var styleElem = itemData.style;
+    if (itemData.c._mdf || this._isFirstFrame) {
+      styleElem.co = 'rgb(' + bmFloor(itemData.c.v[0]) + ',' + bmFloor(itemData.c.v[1]) + ',' + bmFloor(itemData.c.v[2]) + ')';
+    }
+    if (itemData.o._mdf || groupTransform._opMdf || this._isFirstFrame) {
+      styleElem.coOp = itemData.o.v * groupTransform.opacity;
+    }
+  };
+  CVShapeElement.prototype.renderGradientFill = function (styleData, itemData, groupTransform) {
+    var styleElem = itemData.style;
+    var grd;
+    if (!styleElem.grd || itemData.g._mdf || itemData.s._mdf || itemData.e._mdf || styleData.t !== 1 && (itemData.h._mdf || itemData.a._mdf)) {
+      var ctx = this.globalData.canvasContext;
+      var pt1 = itemData.s.v;
+      var pt2 = itemData.e.v;
+      if (styleData.t === 1) {
+        grd = ctx.createLinearGradient(pt1[0], pt1[1], pt2[0], pt2[1]);
+      } else {
+        var rad = Math.sqrt(Math.pow(pt1[0] - pt2[0], 2) + Math.pow(pt1[1] - pt2[1], 2));
+        var ang = Math.atan2(pt2[1] - pt1[1], pt2[0] - pt1[0]);
+        var percent = itemData.h.v;
+        if (percent >= 1) {
+          percent = 0.99;
+        } else if (percent <= -1) {
+          percent = -0.99;
+        }
+        var dist = rad * percent;
+        var x = Math.cos(ang + itemData.a.v) * dist + pt1[0];
+        var y = Math.sin(ang + itemData.a.v) * dist + pt1[1];
+        grd = ctx.createRadialGradient(x, y, 0, pt1[0], pt1[1], rad);
+      }
+      var i;
+      var len = styleData.g.p;
+      var cValues = itemData.g.c;
+      var opacity = 1;
+      for (i = 0; i < len; i += 1) {
+        if (itemData.g._hasOpacity && itemData.g._collapsable) {
+          opacity = itemData.g.o[i * 2 + 1];
+        }
+        grd.addColorStop(cValues[i * 4] / 100, 'rgba(' + cValues[i * 4 + 1] + ',' + cValues[i * 4 + 2] + ',' + cValues[i * 4 + 3] + ',' + opacity + ')');
+      }
+      styleElem.grd = grd;
+    }
+    styleElem.coOp = itemData.o.v * groupTransform.opacity;
+  };
+  CVShapeElement.prototype.renderStroke = function (styleData, itemData, groupTransform) {
+    var styleElem = itemData.style;
+    var d = itemData.d;
+    if (d && (d._mdf || this._isFirstFrame)) {
+      styleElem.da = d.dashArray;
+      styleElem["do"] = d.dashoffset[0];
+    }
+    if (itemData.c._mdf || this._isFirstFrame) {
+      styleElem.co = 'rgb(' + bmFloor(itemData.c.v[0]) + ',' + bmFloor(itemData.c.v[1]) + ',' + bmFloor(itemData.c.v[2]) + ')';
+    }
+    if (itemData.o._mdf || groupTransform._opMdf || this._isFirstFrame) {
+      styleElem.coOp = itemData.o.v * groupTransform.opacity;
+    }
+    if (itemData.w._mdf || this._isFirstFrame) {
+      styleElem.wi = itemData.w.v;
+    }
+  };
+  CVShapeElement.prototype.destroy = function () {
+    this.shapesData = null;
+    this.globalData = null;
+    this.canvasContext = null;
+    this.stylesList.length = 0;
+    this.itemsData.length = 0;
+  };
+
+  function CVTextElement(data, globalData, comp) {
+    this.textSpans = [];
+    this.yOffset = 0;
+    this.fillColorAnim = false;
+    this.strokeColorAnim = false;
+    this.strokeWidthAnim = false;
+    this.stroke = false;
+    this.fill = false;
+    this.justifyOffset = 0;
+    this.currentRender = null;
+    this.renderType = 'canvas';
+    this.values = {
+      fill: 'rgba(0,0,0,0)',
+      stroke: 'rgba(0,0,0,0)',
+      sWidth: 0,
+      fValue: ''
+    };
+    this.initElement(data, globalData, comp);
+  }
+  extendPrototype([BaseElement, TransformElement, CVBaseElement, HierarchyElement, FrameElement, RenderableElement, ITextElement], CVTextElement);
+  CVTextElement.prototype.tHelper = createTag('canvas').getContext('2d');
+  CVTextElement.prototype.buildNewText = function () {
+    var documentData = this.textProperty.currentData;
+    this.renderedLetters = createSizedArray(documentData.l ? documentData.l.length : 0);
+    var hasFill = false;
+    if (documentData.fc) {
+      hasFill = true;
+      this.values.fill = this.buildColor(documentData.fc);
+    } else {
+      this.values.fill = 'rgba(0,0,0,0)';
+    }
+    this.fill = hasFill;
+    var hasStroke = false;
+    if (documentData.sc) {
+      hasStroke = true;
+      this.values.stroke = this.buildColor(documentData.sc);
+      this.values.sWidth = documentData.sw;
+    }
+    var fontData = this.globalData.fontManager.getFontByName(documentData.f);
+    var i;
+    var len;
+    var letters = documentData.l;
+    var matrixHelper = this.mHelper;
+    this.stroke = hasStroke;
+    this.values.fValue = documentData.finalSize + 'px ' + this.globalData.fontManager.getFontByName(documentData.f).fFamily;
+    len = documentData.finalText.length;
+    // this.tHelper.font = this.values.fValue;
+    var charData;
+    var shapeData;
+    var k;
+    var kLen;
+    var shapes;
+    var j;
+    var jLen;
+    var pathNodes;
+    var commands;
+    var pathArr;
+    var singleShape = this.data.singleShape;
+    var trackingOffset = documentData.tr * 0.001 * documentData.finalSize;
+    var xPos = 0;
+    var yPos = 0;
+    var firstLine = true;
+    var cnt = 0;
+    for (i = 0; i < len; i += 1) {
+      charData = this.globalData.fontManager.getCharData(documentData.finalText[i], fontData.fStyle, this.globalData.fontManager.getFontByName(documentData.f).fFamily);
+      shapeData = charData && charData.data || {};
+      matrixHelper.reset();
+      if (singleShape && letters[i].n) {
+        xPos = -trackingOffset;
+        yPos += documentData.yOffset;
+        yPos += firstLine ? 1 : 0;
+        firstLine = false;
+      }
+      shapes = shapeData.shapes ? shapeData.shapes[0].it : [];
+      jLen = shapes.length;
+      matrixHelper.scale(documentData.finalSize / 100, documentData.finalSize / 100);
+      if (singleShape) {
+        this.applyTextPropertiesToMatrix(documentData, matrixHelper, letters[i].line, xPos, yPos);
+      }
+      commands = createSizedArray(jLen - 1);
+      var commandsCounter = 0;
+      for (j = 0; j < jLen; j += 1) {
+        if (shapes[j].ty === 'sh') {
+          kLen = shapes[j].ks.k.i.length;
+          pathNodes = shapes[j].ks.k;
+          pathArr = [];
+          for (k = 1; k < kLen; k += 1) {
+            if (k === 1) {
+              pathArr.push(matrixHelper.applyToX(pathNodes.v[0][0], pathNodes.v[0][1], 0), matrixHelper.applyToY(pathNodes.v[0][0], pathNodes.v[0][1], 0));
+            }
+            pathArr.push(matrixHelper.applyToX(pathNodes.o[k - 1][0], pathNodes.o[k - 1][1], 0), matrixHelper.applyToY(pathNodes.o[k - 1][0], pathNodes.o[k - 1][1], 0), matrixHelper.applyToX(pathNodes.i[k][0], pathNodes.i[k][1], 0), matrixHelper.applyToY(pathNodes.i[k][0], pathNodes.i[k][1], 0), matrixHelper.applyToX(pathNodes.v[k][0], pathNodes.v[k][1], 0), matrixHelper.applyToY(pathNodes.v[k][0], pathNodes.v[k][1], 0));
+          }
+          pathArr.push(matrixHelper.applyToX(pathNodes.o[k - 1][0], pathNodes.o[k - 1][1], 0), matrixHelper.applyToY(pathNodes.o[k - 1][0], pathNodes.o[k - 1][1], 0), matrixHelper.applyToX(pathNodes.i[0][0], pathNodes.i[0][1], 0), matrixHelper.applyToY(pathNodes.i[0][0], pathNodes.i[0][1], 0), matrixHelper.applyToX(pathNodes.v[0][0], pathNodes.v[0][1], 0), matrixHelper.applyToY(pathNodes.v[0][0], pathNodes.v[0][1], 0));
+          commands[commandsCounter] = pathArr;
+          commandsCounter += 1;
+        }
+      }
+      if (singleShape) {
+        xPos += letters[i].l;
+        xPos += trackingOffset;
+      }
+      if (this.textSpans[cnt]) {
+        this.textSpans[cnt].elem = commands;
+      } else {
+        this.textSpans[cnt] = {
+          elem: commands
+        };
+      }
+      cnt += 1;
+    }
+  };
+  CVTextElement.prototype.renderInnerContent = function () {
+    this.validateText();
+    var ctx = this.canvasContext;
+    ctx.font = this.values.fValue;
+    this.globalData.renderer.ctxLineCap('butt');
+    // ctx.lineCap = 'butt';
+    this.globalData.renderer.ctxLineJoin('miter');
+    // ctx.lineJoin = 'miter';
+    this.globalData.renderer.ctxMiterLimit(4);
+    // ctx.miterLimit = 4;
+
+    if (!this.data.singleShape) {
+      this.textAnimator.getMeasures(this.textProperty.currentData, this.lettersChangedFlag);
+    }
+    var i;
+    var len;
+    var j;
+    var jLen;
+    var k;
+    var kLen;
+    var renderedLetters = this.textAnimator.renderedLetters;
+    var letters = this.textProperty.currentData.l;
+    len = letters.length;
+    var renderedLetter;
+    var lastFill = null;
+    var lastStroke = null;
+    var lastStrokeW = null;
+    var commands;
+    var pathArr;
+    var renderer = this.globalData.renderer;
+    for (i = 0; i < len; i += 1) {
+      if (!letters[i].n) {
+        renderedLetter = renderedLetters[i];
+        if (renderedLetter) {
+          renderer.save();
+          renderer.ctxTransform(renderedLetter.p);
+          renderer.ctxOpacity(renderedLetter.o);
+        }
+        if (this.fill) {
+          if (renderedLetter && renderedLetter.fc) {
+            if (lastFill !== renderedLetter.fc) {
+              renderer.ctxFillStyle(renderedLetter.fc);
+              lastFill = renderedLetter.fc;
+              // ctx.fillStyle = renderedLetter.fc;
+            }
+          } else if (lastFill !== this.values.fill) {
+            lastFill = this.values.fill;
+            renderer.ctxFillStyle(this.values.fill);
+            // ctx.fillStyle = this.values.fill;
+          }
+          commands = this.textSpans[i].elem;
+          jLen = commands.length;
+          this.globalData.canvasContext.beginPath();
+          for (j = 0; j < jLen; j += 1) {
+            pathArr = commands[j];
+            kLen = pathArr.length;
+            this.globalData.canvasContext.moveTo(pathArr[0], pathArr[1]);
+            for (k = 2; k < kLen; k += 6) {
+              this.globalData.canvasContext.bezierCurveTo(pathArr[k], pathArr[k + 1], pathArr[k + 2], pathArr[k + 3], pathArr[k + 4], pathArr[k + 5]);
+            }
+          }
+          this.globalData.canvasContext.closePath();
+          renderer.ctxFill();
+          // this.globalData.canvasContext.fill();
+          /// ctx.fillText(this.textSpans[i].val,0,0);
+        }
+        if (this.stroke) {
+          if (renderedLetter && renderedLetter.sw) {
+            if (lastStrokeW !== renderedLetter.sw) {
+              lastStrokeW = renderedLetter.sw;
+              renderer.ctxLineWidth(renderedLetter.sw);
+              // ctx.lineWidth = renderedLetter.sw;
+            }
+          } else if (lastStrokeW !== this.values.sWidth) {
+            lastStrokeW = this.values.sWidth;
+            renderer.ctxLineWidth(this.values.sWidth);
+            // ctx.lineWidth = this.values.sWidth;
+          }
+          if (renderedLetter && renderedLetter.sc) {
+            if (lastStroke !== renderedLetter.sc) {
+              lastStroke = renderedLetter.sc;
+              renderer.ctxStrokeStyle(renderedLetter.sc);
+              // ctx.strokeStyle = renderedLetter.sc;
+            }
+          } else if (lastStroke !== this.values.stroke) {
+            lastStroke = this.values.stroke;
+            renderer.ctxStrokeStyle(this.values.stroke);
+            // ctx.strokeStyle = this.values.stroke;
+          }
+          commands = this.textSpans[i].elem;
+          jLen = commands.length;
+          this.globalData.canvasContext.beginPath();
+          for (j = 0; j < jLen; j += 1) {
+            pathArr = commands[j];
+            kLen = pathArr.length;
+            this.globalData.canvasContext.moveTo(pathArr[0], pathArr[1]);
+            for (k = 2; k < kLen; k += 6) {
+              this.globalData.canvasContext.bezierCurveTo(pathArr[k], pathArr[k + 1], pathArr[k + 2], pathArr[k + 3], pathArr[k + 4], pathArr[k + 5]);
+            }
+          }
+          this.globalData.canvasContext.closePath();
+          renderer.ctxStroke();
+          // this.globalData.canvasContext.stroke();
+          /// ctx.strokeText(letters[i].val,0,0);
+        }
+        if (renderedLetter) {
+          this.globalData.renderer.restore();
+        }
+      }
+    }
+  };
+
+  function CVImageElement(data, globalData, comp) {
+    this.assetData = globalData.getAssetData(data.refId);
+    this.img = globalData.imageLoader.getAsset(this.assetData);
+    this.initElement(data, globalData, comp);
+  }
+  extendPrototype([BaseElement, TransformElement, CVBaseElement, HierarchyElement, FrameElement, RenderableElement], CVImageElement);
+  CVImageElement.prototype.initElement = SVGShapeElement.prototype.initElement;
+  CVImageElement.prototype.prepareFrame = IImageElement.prototype.prepareFrame;
+  CVImageElement.prototype.createContent = function () {
+    if (this.img.width && (this.assetData.w !== this.img.width || this.assetData.h !== this.img.height)) {
+      var canvas = createTag('canvas');
+      canvas.width = this.assetData.w;
+      canvas.height = this.assetData.h;
+      var ctx = canvas.getContext('2d');
+      var imgW = this.img.width;
+      var imgH = this.img.height;
+      var imgRel = imgW / imgH;
+      var canvasRel = this.assetData.w / this.assetData.h;
+      var widthCrop;
+      var heightCrop;
+      var par = this.assetData.pr || this.globalData.renderConfig.imagePreserveAspectRatio;
+      if (imgRel > canvasRel && par === 'xMidYMid slice' || imgRel < canvasRel && par !== 'xMidYMid slice') {
+        heightCrop = imgH;
+        widthCrop = heightCrop * canvasRel;
+      } else {
+        widthCrop = imgW;
+        heightCrop = widthCrop / canvasRel;
+      }
+      ctx.drawImage(this.img, (imgW - widthCrop) / 2, (imgH - heightCrop) / 2, widthCrop, heightCrop, 0, 0, this.assetData.w, this.assetData.h);
+      this.img = canvas;
+    }
+  };
+  CVImageElement.prototype.renderInnerContent = function () {
+    this.canvasContext.drawImage(this.img, 0, 0);
+  };
+  CVImageElement.prototype.destroy = function () {
+    this.img = null;
+  };
+
+  function CVSolidElement(data, globalData, comp) {
+    this.initElement(data, globalData, comp);
+  }
+  extendPrototype([BaseElement, TransformElement, CVBaseElement, HierarchyElement, FrameElement, RenderableElement], CVSolidElement);
+  CVSolidElement.prototype.initElement = SVGShapeElement.prototype.initElement;
+  CVSolidElement.prototype.prepareFrame = IImageElement.prototype.prepareFrame;
+  CVSolidElement.prototype.renderInnerContent = function () {
+    // var ctx = this.canvasContext;
+    this.globalData.renderer.ctxFillStyle(this.data.sc);
+    // ctx.fillStyle = this.data.sc;
+    this.globalData.renderer.ctxFillRect(0, 0, this.data.sw, this.data.sh);
+    // ctx.fillRect(0, 0, this.data.sw, this.data.sh);
+    //
+  };
+
+  function WebGLRendererBase() {}
+  extendPrototype([BaseRenderer], WebGLRendererBase);
+  WebGLRendererBase.prototype.createShape = function (data) {
+    return new CVShapeElement(data, this.globalData, this);
+  };
+  WebGLRendererBase.prototype.createText = function (data) {
+    return new CVTextElement(data, this.globalData, this);
+  };
+  WebGLRendererBase.prototype.createImage = function (data) {
+    return new CVImageElement(data, this.globalData, this);
+  };
+  WebGLRendererBase.prototype.createSolid = function (data) {
+    return new CVSolidElement(data, this.globalData, this);
+  };
+  WebGLRendererBase.prototype.createNull = SVGRenderer.prototype.createNull;
+
+  // 2D canvas pass-through helpers (elements draw into an offscreen 2D canvas
+  // that we later upload to a GL texture).
+  WebGLRendererBase.prototype.ctxTransform = function (props) {
+    if (props[0] === 1 && props[1] === 0 && props[4] === 0 && props[5] === 1 && props[12] === 0 && props[13] === 0) {
+      return;
+    }
+    this.canvasContext.transform(props[0], props[1], props[4], props[5], props[12], props[13]);
+  };
+  WebGLRendererBase.prototype.ctxOpacity = function (op) {
+    this.canvasContext.globalAlpha *= op < 0 ? 0 : op;
+  };
+  WebGLRendererBase.prototype.ctxFillStyle = function (value) {
+    this.canvasContext.fillStyle = value;
+  };
+  WebGLRendererBase.prototype.ctxStrokeStyle = function (value) {
+    this.canvasContext.strokeStyle = value;
+  };
+  WebGLRendererBase.prototype.ctxLineWidth = function (value) {
+    this.canvasContext.lineWidth = value;
+  };
+  WebGLRendererBase.prototype.ctxLineCap = function (value) {
+    this.canvasContext.lineCap = value;
+  };
+  WebGLRendererBase.prototype.ctxLineJoin = function (value) {
+    this.canvasContext.lineJoin = value;
+  };
+  WebGLRendererBase.prototype.ctxMiterLimit = function (value) {
+    this.canvasContext.miterLimit = value;
+  };
+  WebGLRendererBase.prototype.ctxFill = function (rule) {
+    this.canvasContext.fill(rule);
+  };
+  WebGLRendererBase.prototype.ctxFillRect = function (x, y, w, h) {
+    this.canvasContext.fillRect(x, y, w, h);
+  };
+  WebGLRendererBase.prototype.ctxStroke = function () {
+    this.canvasContext.stroke();
+  };
+  WebGLRendererBase.prototype.reset = function () {
+    if (!this.renderConfig.clearCanvas) {
+      this.canvasContext.restore();
+      return;
+    }
+    this.contextData.reset();
+  };
+  WebGLRendererBase.prototype.save = function () {
+    this.canvasContext.save();
+  };
+  WebGLRendererBase.prototype.restore = function (actionFlag) {
+    if (!this.renderConfig.clearCanvas) {
+      this.canvasContext.restore();
+      return;
+    }
+    if (actionFlag) {
+      this.globalData.blendMode = 'source-over';
+    }
+    this.contextData.restore(actionFlag);
+  };
+
+  // WebGL helpers
+  var QUAD_VERTEX_SHADER = ['attribute vec2 a_position;', 'attribute vec2 a_texCoord;', 'varying vec2 v_texCoord;', 'void main() {', '  gl_Position = vec4(a_position, 0.0, 1.0);', '  v_texCoord = a_texCoord;', '}'].join('\n');
+  var QUAD_FRAGMENT_SHADER = ['precision mediump float;', 'uniform sampler2D u_texture;', 'varying vec2 v_texCoord;', 'void main() {', '  gl_FragColor = texture2D(u_texture, v_texCoord);', '}'].join('\n');
+  function compileShader(gl, type, source) {
+    var shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      var info = gl.getShaderInfoLog(shader);
+      gl.deleteShader(shader);
+      throw new Error('WebGL shader compile failed: ' + info);
+    }
+    return shader;
+  }
+  function linkProgram(gl, vsSource, fsSource) {
+    var vs = compileShader(gl, gl.VERTEX_SHADER, vsSource);
+    var fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    var program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      var info = gl.getProgramInfoLog(program);
+      gl.deleteProgram(program);
+      throw new Error('WebGL program link failed: ' + info);
+    }
+    return program;
+  }
+  WebGLRendererBase.prototype.initWebGL = function () {
+    var gl = this.gl;
+    this.glProgram = linkProgram(gl, QUAD_VERTEX_SHADER, QUAD_FRAGMENT_SHADER);
+    this.glAttribs = {
+      position: gl.getAttribLocation(this.glProgram, 'a_position'),
+      texCoord: gl.getAttribLocation(this.glProgram, 'a_texCoord')
+    };
+    this.glUniforms = {
+      texture: gl.getUniformLocation(this.glProgram, 'u_texture')
+    };
+
+    // Fullscreen quad (clip-space) and matching texture coordinates.
+    // The texture is flipped vertically so that the 2D canvas (which has y-down
+    // origin) appears the right way up in WebGL (y-up clip space).
+    this.glPositionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.glPositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+    this.glTexCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.glTexCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0]), gl.STATIC_DRAW);
+    this.glTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.glTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.disable(gl.DEPTH_TEST);
+  };
+  WebGLRendererBase.prototype.presentToWebGL = function () {
+    var gl = this.gl;
+    if (!gl) {
+      return;
+    }
+    var sourceCanvas = this.offscreenCanvas;
+    var glCanvas = this.glCanvas;
+    if (glCanvas.width !== sourceCanvas.width || glCanvas.height !== sourceCanvas.height) {
+      glCanvas.width = sourceCanvas.width;
+      glCanvas.height = sourceCanvas.height;
+    }
+    gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.glProgram);
+    gl.bindTexture(gl.TEXTURE_2D, this.glTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+    gl.uniform1i(this.glUniforms.texture, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.glPositionBuffer);
+    gl.enableVertexAttribArray(this.glAttribs.position);
+    gl.vertexAttribPointer(this.glAttribs.position, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.glTexCoordBuffer);
+    gl.enableVertexAttribArray(this.glAttribs.texCoord);
+    gl.vertexAttribPointer(this.glAttribs.texCoord, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+  WebGLRendererBase.prototype.configAnimation = function (animData) {
+    if (this.animationItem.wrapper) {
+      // The visible container is a WebGL canvas; the actual drawing happens on
+      // an offscreen 2D canvas that we upload as a texture each frame.
+      this.glCanvas = createTag('canvas');
+      var containerStyle = this.glCanvas.style;
+      containerStyle.width = '100%';
+      containerStyle.height = '100%';
+      var origin = '0px 0px 0px';
+      containerStyle.transformOrigin = origin;
+      containerStyle.mozTransformOrigin = origin;
+      containerStyle.webkitTransformOrigin = origin;
+      containerStyle['-webkit-transform'] = origin;
+      containerStyle.contentVisibility = this.renderConfig.contentVisibility;
+      this.animationItem.wrapper.appendChild(this.glCanvas);
+      if (this.renderConfig.className) {
+        this.glCanvas.setAttribute('class', this.renderConfig.className);
+      }
+      if (this.renderConfig.id) {
+        this.glCanvas.setAttribute('id', this.renderConfig.id);
+      }
+      this.animationItem.container = this.glCanvas;
+      var glOptions = {
+        alpha: true,
+        premultipliedAlpha: true,
+        antialias: true,
+        preserveDrawingBuffer: false
+      };
+      this.gl = this.glCanvas.getContext('webgl', glOptions) || this.glCanvas.getContext('experimental-webgl', glOptions);
+      if (!this.gl) {
+        throw new Error('WebGL is not supported in this environment.');
+      }
+      this.offscreenCanvas = createTag('canvas');
+      this.canvasContext = this.offscreenCanvas.getContext('2d');
+      this.initWebGL();
+    } else {
+      // Allow callers to provide an existing WebGL context. We still need a 2D
+      // canvas to rasterize into.
+      this.gl = this.renderConfig.context;
+      this.glCanvas = this.gl.canvas;
+      this.offscreenCanvas = createTag('canvas');
+      this.canvasContext = this.offscreenCanvas.getContext('2d');
+      this.initWebGL();
+    }
+    this.contextData.setContext(this.canvasContext);
+    this.data = animData;
+    this.layers = animData.layers;
+    this.transformCanvas = {
+      w: animData.w,
+      h: animData.h,
+      sx: 0,
+      sy: 0,
+      tx: 0,
+      ty: 0
+    };
+    this.setupGlobalData(animData, document.body);
+    this.globalData.canvasContext = this.canvasContext;
+    this.globalData.renderer = this;
+    this.globalData.isDashed = false;
+    this.globalData.progressiveLoad = this.renderConfig.progressiveLoad;
+    this.globalData.transformCanvas = this.transformCanvas;
+    this.elements = createSizedArray(animData.layers.length);
+    this.updateContainerSize();
+  };
+  WebGLRendererBase.prototype.updateContainerSize = function (width, height) {
+    this.reset();
+    var elementWidth;
+    var elementHeight;
+    if (width) {
+      elementWidth = width;
+      elementHeight = height;
+      this.offscreenCanvas.width = elementWidth;
+      this.offscreenCanvas.height = elementHeight;
+    } else {
+      if (this.animationItem.wrapper && this.glCanvas) {
+        elementWidth = this.animationItem.wrapper.offsetWidth;
+        elementHeight = this.animationItem.wrapper.offsetHeight;
+      } else {
+        elementWidth = this.glCanvas.width;
+        elementHeight = this.glCanvas.height;
+      }
+      this.offscreenCanvas.width = elementWidth * this.renderConfig.dpr;
+      this.offscreenCanvas.height = elementHeight * this.renderConfig.dpr;
+    }
+    this.glCanvas.width = this.offscreenCanvas.width;
+    this.glCanvas.height = this.offscreenCanvas.height;
+    var elementRel;
+    var animationRel;
+    if (this.renderConfig.preserveAspectRatio.indexOf('meet') !== -1 || this.renderConfig.preserveAspectRatio.indexOf('slice') !== -1) {
+      var par = this.renderConfig.preserveAspectRatio.split(' ');
+      var fillType = par[1] || 'meet';
+      var pos = par[0] || 'xMidYMid';
+      var xPos = pos.substr(0, 4);
+      var yPos = pos.substr(4);
+      elementRel = elementWidth / elementHeight;
+      animationRel = this.transformCanvas.w / this.transformCanvas.h;
+      if (animationRel > elementRel && fillType === 'meet' || animationRel < elementRel && fillType === 'slice') {
+        this.transformCanvas.sx = elementWidth / (this.transformCanvas.w / this.renderConfig.dpr);
+        this.transformCanvas.sy = elementWidth / (this.transformCanvas.w / this.renderConfig.dpr);
+      } else {
+        this.transformCanvas.sx = elementHeight / (this.transformCanvas.h / this.renderConfig.dpr);
+        this.transformCanvas.sy = elementHeight / (this.transformCanvas.h / this.renderConfig.dpr);
+      }
+      if (xPos === 'xMid' && (animationRel < elementRel && fillType === 'meet' || animationRel > elementRel && fillType === 'slice')) {
+        this.transformCanvas.tx = (elementWidth - this.transformCanvas.w * (elementHeight / this.transformCanvas.h)) / 2 * this.renderConfig.dpr;
+      } else if (xPos === 'xMax' && (animationRel < elementRel && fillType === 'meet' || animationRel > elementRel && fillType === 'slice')) {
+        this.transformCanvas.tx = (elementWidth - this.transformCanvas.w * (elementHeight / this.transformCanvas.h)) * this.renderConfig.dpr;
+      } else {
+        this.transformCanvas.tx = 0;
+      }
+      if (yPos === 'YMid' && (animationRel > elementRel && fillType === 'meet' || animationRel < elementRel && fillType === 'slice')) {
+        this.transformCanvas.ty = (elementHeight - this.transformCanvas.h * (elementWidth / this.transformCanvas.w)) / 2 * this.renderConfig.dpr;
+      } else if (yPos === 'YMax' && (animationRel > elementRel && fillType === 'meet' || animationRel < elementRel && fillType === 'slice')) {
+        this.transformCanvas.ty = (elementHeight - this.transformCanvas.h * (elementWidth / this.transformCanvas.w)) * this.renderConfig.dpr;
+      } else {
+        this.transformCanvas.ty = 0;
+      }
+    } else if (this.renderConfig.preserveAspectRatio === 'none') {
+      this.transformCanvas.sx = elementWidth / (this.transformCanvas.w / this.renderConfig.dpr);
+      this.transformCanvas.sy = elementHeight / (this.transformCanvas.h / this.renderConfig.dpr);
+      this.transformCanvas.tx = 0;
+      this.transformCanvas.ty = 0;
+    } else {
+      this.transformCanvas.sx = this.renderConfig.dpr;
+      this.transformCanvas.sy = this.renderConfig.dpr;
+      this.transformCanvas.tx = 0;
+      this.transformCanvas.ty = 0;
+    }
+    this.transformCanvas.props = [this.transformCanvas.sx, 0, 0, 0, 0, this.transformCanvas.sy, 0, 0, 0, 0, 1, 0, this.transformCanvas.tx, this.transformCanvas.ty, 0, 1];
+    this.ctxTransform(this.transformCanvas.props);
+    this.canvasContext.beginPath();
+    this.canvasContext.rect(0, 0, this.transformCanvas.w, this.transformCanvas.h);
+    this.canvasContext.closePath();
+    this.canvasContext.clip();
+    this.renderFrame(this.renderedFrame, true);
+  };
+  WebGLRendererBase.prototype.destroy = function () {
+    if (this.renderConfig.clearCanvas && this.animationItem.wrapper) {
+      this.animationItem.wrapper.innerText = '';
+    }
+    var i;
+    var len = this.layers ? this.layers.length : 0;
+    for (i = len - 1; i >= 0; i -= 1) {
+      if (this.elements[i] && this.elements[i].destroy) {
+        this.elements[i].destroy();
+      }
+    }
+    this.elements.length = 0;
+    if (this.gl) {
+      if (this.glTexture) this.gl.deleteTexture(this.glTexture);
+      if (this.glPositionBuffer) this.gl.deleteBuffer(this.glPositionBuffer);
+      if (this.glTexCoordBuffer) this.gl.deleteBuffer(this.glTexCoordBuffer);
+      if (this.glProgram) this.gl.deleteProgram(this.glProgram);
+    }
+    this.gl = null;
+    this.glCanvas = null;
+    this.offscreenCanvas = null;
+    this.canvasContext = null;
+    this.globalData.canvasContext = null;
+    this.animationItem.container = null;
+    this.destroyed = true;
+  };
+  WebGLRendererBase.prototype.renderFrame = function (num, forceRender) {
+    if (this.renderedFrame === num && this.renderConfig.clearCanvas === true && !forceRender || this.destroyed || num === -1) {
+      return;
+    }
+    this.renderedFrame = num;
+    this.globalData.frameNum = num - this.animationItem._isFirstFrame;
+    this.globalData.frameId += 1;
+    this.globalData._mdf = !this.renderConfig.clearCanvas || forceRender;
+    this.globalData.projectInterface.currentFrame = num;
+    var i;
+    var len = this.layers.length;
+    if (!this.completeLayers) {
+      this.checkLayers(num);
+    }
+    for (i = len - 1; i >= 0; i -= 1) {
+      if (this.completeLayers || this.elements[i]) {
+        this.elements[i].prepareFrame(num - this.layers[i].st);
+      }
+    }
+    if (this.globalData._mdf) {
+      if (this.renderConfig.clearCanvas === true) {
+        this.canvasContext.clearRect(0, 0, this.transformCanvas.w, this.transformCanvas.h);
+      } else {
+        this.save();
+      }
+      for (i = len - 1; i >= 0; i -= 1) {
+        if (this.completeLayers || this.elements[i]) {
+          this.elements[i].renderFrame();
+        }
+      }
+      if (this.renderConfig.clearCanvas !== true) {
+        this.restore();
+      }
+      this.presentToWebGL();
+    }
+    this.renderConfig.bufferManager.releaseAll();
+  };
+  WebGLRendererBase.prototype.buildItem = function (pos) {
+    var elements = this.elements;
+    if (elements[pos] || this.layers[pos].ty === 99) {
+      return;
+    }
+    var element = this.createItem(this.layers[pos], this, this.globalData);
+    elements[pos] = element;
+    element.initExpressions();
+  };
+  WebGLRendererBase.prototype.checkPendingElements = function () {
+    while (this.pendingElements.length) {
+      var element = this.pendingElements.pop();
+      element.checkParenting();
+    }
+  };
+  WebGLRendererBase.prototype.hide = function () {
+    this.animationItem.container.style.display = 'none';
+  };
+  WebGLRendererBase.prototype.show = function () {
+    this.animationItem.container.style.display = 'block';
+  };
+
+  function CanvasContext() {
+    this.opacity = -1;
+    this.transform = createTypedArray('float32', 16);
+    this.fillStyle = '';
+    this.strokeStyle = '';
+    this.lineWidth = '';
+    this.lineCap = '';
+    this.lineJoin = '';
+    this.miterLimit = '';
+    this.id = Math.random();
+  }
+  function CVContextData() {
+    this.stack = [];
+    this.cArrPos = 0;
+    this.cTr = new Matrix();
+    var i;
+    var len = 15;
+    for (i = 0; i < len; i += 1) {
+      var canvasContext = new CanvasContext();
+      this.stack[i] = canvasContext;
+    }
+    this._length = len;
+    this.nativeContext = null;
+    this.transformMat = new Matrix();
+    this.currentOpacity = 1;
+    //
+    this.currentFillStyle = '';
+    this.appliedFillStyle = '';
+    //
+    this.currentStrokeStyle = '';
+    this.appliedStrokeStyle = '';
+    //
+    this.currentLineWidth = '';
+    this.appliedLineWidth = '';
+    //
+    this.currentLineCap = '';
+    this.appliedLineCap = '';
+    //
+    this.currentLineJoin = '';
+    this.appliedLineJoin = '';
+    //
+    this.appliedMiterLimit = '';
+    this.currentMiterLimit = '';
+  }
+  CVContextData.prototype.duplicate = function () {
+    var newLength = this._length * 2;
+    var i = 0;
+    for (i = this._length; i < newLength; i += 1) {
+      this.stack[i] = new CanvasContext();
+    }
+    this._length = newLength;
+  };
+  CVContextData.prototype.reset = function () {
+    this.cArrPos = 0;
+    this.cTr.reset();
+    this.stack[this.cArrPos].opacity = 1;
+  };
+  CVContextData.prototype.restore = function (forceRestore) {
+    this.cArrPos -= 1;
+    var currentContext = this.stack[this.cArrPos];
+    var transform = currentContext.transform;
+    var i;
+    var arr = this.cTr.props;
+    for (i = 0; i < 16; i += 1) {
+      arr[i] = transform[i];
+    }
+    if (forceRestore) {
+      this.nativeContext.restore();
+      var prevStack = this.stack[this.cArrPos + 1];
+      this.appliedFillStyle = prevStack.fillStyle;
+      this.appliedStrokeStyle = prevStack.strokeStyle;
+      this.appliedLineWidth = prevStack.lineWidth;
+      this.appliedLineCap = prevStack.lineCap;
+      this.appliedLineJoin = prevStack.lineJoin;
+      this.appliedMiterLimit = prevStack.miterLimit;
+    }
+    this.nativeContext.setTransform(transform[0], transform[1], transform[4], transform[5], transform[12], transform[13]);
+    if (forceRestore || currentContext.opacity !== -1 && this.currentOpacity !== currentContext.opacity) {
+      this.nativeContext.globalAlpha = currentContext.opacity;
+      this.currentOpacity = currentContext.opacity;
+    }
+    this.currentFillStyle = currentContext.fillStyle;
+    this.currentStrokeStyle = currentContext.strokeStyle;
+    this.currentLineWidth = currentContext.lineWidth;
+    this.currentLineCap = currentContext.lineCap;
+    this.currentLineJoin = currentContext.lineJoin;
+    this.currentMiterLimit = currentContext.miterLimit;
+  };
+  CVContextData.prototype.save = function (saveOnNativeFlag) {
+    if (saveOnNativeFlag) {
+      this.nativeContext.save();
+    }
+    var props = this.cTr.props;
+    if (this._length <= this.cArrPos) {
+      this.duplicate();
+    }
+    var currentStack = this.stack[this.cArrPos];
+    var i;
+    for (i = 0; i < 16; i += 1) {
+      currentStack.transform[i] = props[i];
+    }
+    this.cArrPos += 1;
+    var newStack = this.stack[this.cArrPos];
+    newStack.opacity = currentStack.opacity;
+    newStack.fillStyle = currentStack.fillStyle;
+    newStack.strokeStyle = currentStack.strokeStyle;
+    newStack.lineWidth = currentStack.lineWidth;
+    newStack.lineCap = currentStack.lineCap;
+    newStack.lineJoin = currentStack.lineJoin;
+    newStack.miterLimit = currentStack.miterLimit;
+  };
+  CVContextData.prototype.setOpacity = function (value) {
+    this.stack[this.cArrPos].opacity = value;
+  };
+  CVContextData.prototype.setContext = function (value) {
+    this.nativeContext = value;
+  };
+  CVContextData.prototype.fillStyle = function (value) {
+    if (this.stack[this.cArrPos].fillStyle !== value) {
+      this.currentFillStyle = value;
+      this.stack[this.cArrPos].fillStyle = value;
+    }
+  };
+  CVContextData.prototype.strokeStyle = function (value) {
+    if (this.stack[this.cArrPos].strokeStyle !== value) {
+      this.currentStrokeStyle = value;
+      this.stack[this.cArrPos].strokeStyle = value;
+    }
+  };
+  CVContextData.prototype.lineWidth = function (value) {
+    if (this.stack[this.cArrPos].lineWidth !== value) {
+      this.currentLineWidth = value;
+      this.stack[this.cArrPos].lineWidth = value;
+    }
+  };
+  CVContextData.prototype.lineCap = function (value) {
+    if (this.stack[this.cArrPos].lineCap !== value) {
+      this.currentLineCap = value;
+      this.stack[this.cArrPos].lineCap = value;
+    }
+  };
+  CVContextData.prototype.lineJoin = function (value) {
+    if (this.stack[this.cArrPos].lineJoin !== value) {
+      this.currentLineJoin = value;
+      this.stack[this.cArrPos].lineJoin = value;
+    }
+  };
+  CVContextData.prototype.miterLimit = function (value) {
+    if (this.stack[this.cArrPos].miterLimit !== value) {
+      this.currentMiterLimit = value;
+      this.stack[this.cArrPos].miterLimit = value;
+    }
+  };
+  CVContextData.prototype.transform = function (props) {
+    this.transformMat.cloneFromProps(props);
+    // Taking the last transform value from the stored stack of transforms
+    var currentTransform = this.cTr;
+    // Applying the last transform value after the new transform to respect the order of transformations
+    this.transformMat.multiply(currentTransform);
+    // Storing the new transformed value in the stored transform
+    currentTransform.cloneFromProps(this.transformMat.props);
+    var trProps = currentTransform.props;
+    // Applying the new transform to the canvas
+    this.nativeContext.setTransform(trProps[0], trProps[1], trProps[4], trProps[5], trProps[12], trProps[13]);
+  };
+  CVContextData.prototype.opacity = function (op) {
+    var currentOpacity = this.stack[this.cArrPos].opacity;
+    currentOpacity *= op < 0 ? 0 : op;
+    if (this.stack[this.cArrPos].opacity !== currentOpacity) {
+      if (this.currentOpacity !== op) {
+        this.nativeContext.globalAlpha = op;
+        this.currentOpacity = op;
+      }
+      this.stack[this.cArrPos].opacity = currentOpacity;
+    }
+  };
+  CVContextData.prototype.fill = function (rule) {
+    if (this.appliedFillStyle !== this.currentFillStyle) {
+      this.appliedFillStyle = this.currentFillStyle;
+      this.nativeContext.fillStyle = this.appliedFillStyle;
+    }
+    this.nativeContext.fill(rule);
+  };
+  CVContextData.prototype.fillRect = function (x, y, w, h) {
+    if (this.appliedFillStyle !== this.currentFillStyle) {
+      this.appliedFillStyle = this.currentFillStyle;
+      this.nativeContext.fillStyle = this.appliedFillStyle;
+    }
+    this.nativeContext.fillRect(x, y, w, h);
+  };
+  CVContextData.prototype.stroke = function () {
+    if (this.appliedStrokeStyle !== this.currentStrokeStyle) {
+      this.appliedStrokeStyle = this.currentStrokeStyle;
+      this.nativeContext.strokeStyle = this.appliedStrokeStyle;
+    }
+    if (this.appliedLineWidth !== this.currentLineWidth) {
+      this.appliedLineWidth = this.currentLineWidth;
+      this.nativeContext.lineWidth = this.appliedLineWidth;
+    }
+    if (this.appliedLineCap !== this.currentLineCap) {
+      this.appliedLineCap = this.currentLineCap;
+      this.nativeContext.lineCap = this.appliedLineCap;
+    }
+    if (this.appliedLineJoin !== this.currentLineJoin) {
+      this.appliedLineJoin = this.currentLineJoin;
+      this.nativeContext.lineJoin = this.appliedLineJoin;
+    }
+    if (this.appliedMiterLimit !== this.currentMiterLimit) {
+      this.appliedMiterLimit = this.currentMiterLimit;
+      this.nativeContext.miterLimit = this.appliedMiterLimit;
+    }
+    this.nativeContext.stroke();
+  };
+
+  function CanvasRendererBase() {}
+  extendPrototype([BaseRenderer], CanvasRendererBase);
+  CanvasRendererBase.prototype.createShape = function (data) {
+    return new CVShapeElement(data, this.globalData, this);
+  };
+  CanvasRendererBase.prototype.createText = function (data) {
+    return new CVTextElement(data, this.globalData, this);
+  };
+  CanvasRendererBase.prototype.createImage = function (data) {
+    return new CVImageElement(data, this.globalData, this);
+  };
+  CanvasRendererBase.prototype.createSolid = function (data) {
+    return new CVSolidElement(data, this.globalData, this);
+  };
+  CanvasRendererBase.prototype.createNull = SVGRenderer.prototype.createNull;
+  CanvasRendererBase.prototype.ctxTransform = function (props) {
+    if (props[0] === 1 && props[1] === 0 && props[4] === 0 && props[5] === 1 && props[12] === 0 && props[13] === 0) {
+      return;
+    }
+    this.canvasContext.transform(props[0], props[1], props[4], props[5], props[12], props[13]);
+  };
+  CanvasRendererBase.prototype.ctxOpacity = function (op) {
+    this.canvasContext.globalAlpha *= op < 0 ? 0 : op;
+  };
+  CanvasRendererBase.prototype.ctxFillStyle = function (value) {
+    this.canvasContext.fillStyle = value;
+  };
+  CanvasRendererBase.prototype.ctxStrokeStyle = function (value) {
+    this.canvasContext.strokeStyle = value;
+  };
+  CanvasRendererBase.prototype.ctxLineWidth = function (value) {
+    this.canvasContext.lineWidth = value;
+  };
+  CanvasRendererBase.prototype.ctxLineCap = function (value) {
+    this.canvasContext.lineCap = value;
+  };
+  CanvasRendererBase.prototype.ctxLineJoin = function (value) {
+    this.canvasContext.lineJoin = value;
+  };
+  CanvasRendererBase.prototype.ctxMiterLimit = function (value) {
+    this.canvasContext.miterLimit = value;
+  };
+  CanvasRendererBase.prototype.ctxFill = function (rule) {
+    this.canvasContext.fill(rule);
+  };
+  CanvasRendererBase.prototype.ctxFillRect = function (x, y, w, h) {
+    this.canvasContext.fillRect(x, y, w, h);
+  };
+  CanvasRendererBase.prototype.ctxStroke = function () {
+    this.canvasContext.stroke();
+  };
+  CanvasRendererBase.prototype.reset = function () {
+    if (!this.renderConfig.clearCanvas) {
+      this.canvasContext.restore();
+      return;
+    }
+    this.contextData.reset();
+  };
+  CanvasRendererBase.prototype.save = function () {
+    this.canvasContext.save();
+  };
+  CanvasRendererBase.prototype.restore = function (actionFlag) {
+    if (!this.renderConfig.clearCanvas) {
+      this.canvasContext.restore();
+      return;
+    }
+    if (actionFlag) {
+      this.globalData.blendMode = 'source-over';
+    }
+    this.contextData.restore(actionFlag);
+  };
+  CanvasRendererBase.prototype.configAnimation = function (animData) {
+    if (this.animationItem.wrapper) {
+      this.animationItem.container = createTag('canvas');
+      var containerStyle = this.animationItem.container.style;
+      containerStyle.width = '100%';
+      containerStyle.height = '100%';
+      var origin = '0px 0px 0px';
+      containerStyle.transformOrigin = origin;
+      containerStyle.mozTransformOrigin = origin;
+      containerStyle.webkitTransformOrigin = origin;
+      containerStyle['-webkit-transform'] = origin;
+      containerStyle.contentVisibility = this.renderConfig.contentVisibility;
+      this.animationItem.wrapper.appendChild(this.animationItem.container);
+      this.canvasContext = this.animationItem.container.getContext('2d');
+      if (this.renderConfig.className) {
+        this.animationItem.container.setAttribute('class', this.renderConfig.className);
+      }
+      if (this.renderConfig.id) {
+        this.animationItem.container.setAttribute('id', this.renderConfig.id);
+      }
+    } else {
+      this.canvasContext = this.renderConfig.context;
+    }
+    this.contextData.setContext(this.canvasContext);
+    this.data = animData;
+    this.layers = animData.layers;
+    this.transformCanvas = {
+      w: animData.w,
+      h: animData.h,
+      sx: 0,
+      sy: 0,
+      tx: 0,
+      ty: 0
+    };
+    this.setupGlobalData(animData, document.body);
+    this.globalData.canvasContext = this.canvasContext;
+    this.globalData.renderer = this;
+    this.globalData.isDashed = false;
+    this.globalData.progressiveLoad = this.renderConfig.progressiveLoad;
+    this.globalData.transformCanvas = this.transformCanvas;
+    this.elements = createSizedArray(animData.layers.length);
+    this.updateContainerSize();
+  };
+  CanvasRendererBase.prototype.updateContainerSize = function (width, height) {
+    this.reset();
+    var elementWidth;
+    var elementHeight;
+    if (width) {
+      elementWidth = width;
+      elementHeight = height;
+      this.canvasContext.canvas.width = elementWidth;
+      this.canvasContext.canvas.height = elementHeight;
+    } else {
+      if (this.animationItem.wrapper && this.animationItem.container) {
+        elementWidth = this.animationItem.wrapper.offsetWidth;
+        elementHeight = this.animationItem.wrapper.offsetHeight;
+      } else {
+        elementWidth = this.canvasContext.canvas.width;
+        elementHeight = this.canvasContext.canvas.height;
+      }
+      this.canvasContext.canvas.width = elementWidth * this.renderConfig.dpr;
+      this.canvasContext.canvas.height = elementHeight * this.renderConfig.dpr;
+    }
+    var elementRel;
+    var animationRel;
+    if (this.renderConfig.preserveAspectRatio.indexOf('meet') !== -1 || this.renderConfig.preserveAspectRatio.indexOf('slice') !== -1) {
+      var par = this.renderConfig.preserveAspectRatio.split(' ');
+      var fillType = par[1] || 'meet';
+      var pos = par[0] || 'xMidYMid';
+      var xPos = pos.substr(0, 4);
+      var yPos = pos.substr(4);
+      elementRel = elementWidth / elementHeight;
+      animationRel = this.transformCanvas.w / this.transformCanvas.h;
+      if (animationRel > elementRel && fillType === 'meet' || animationRel < elementRel && fillType === 'slice') {
+        this.transformCanvas.sx = elementWidth / (this.transformCanvas.w / this.renderConfig.dpr);
+        this.transformCanvas.sy = elementWidth / (this.transformCanvas.w / this.renderConfig.dpr);
+      } else {
+        this.transformCanvas.sx = elementHeight / (this.transformCanvas.h / this.renderConfig.dpr);
+        this.transformCanvas.sy = elementHeight / (this.transformCanvas.h / this.renderConfig.dpr);
+      }
+      if (xPos === 'xMid' && (animationRel < elementRel && fillType === 'meet' || animationRel > elementRel && fillType === 'slice')) {
+        this.transformCanvas.tx = (elementWidth - this.transformCanvas.w * (elementHeight / this.transformCanvas.h)) / 2 * this.renderConfig.dpr;
+      } else if (xPos === 'xMax' && (animationRel < elementRel && fillType === 'meet' || animationRel > elementRel && fillType === 'slice')) {
+        this.transformCanvas.tx = (elementWidth - this.transformCanvas.w * (elementHeight / this.transformCanvas.h)) * this.renderConfig.dpr;
+      } else {
+        this.transformCanvas.tx = 0;
+      }
+      if (yPos === 'YMid' && (animationRel > elementRel && fillType === 'meet' || animationRel < elementRel && fillType === 'slice')) {
+        this.transformCanvas.ty = (elementHeight - this.transformCanvas.h * (elementWidth / this.transformCanvas.w)) / 2 * this.renderConfig.dpr;
+      } else if (yPos === 'YMax' && (animationRel > elementRel && fillType === 'meet' || animationRel < elementRel && fillType === 'slice')) {
+        this.transformCanvas.ty = (elementHeight - this.transformCanvas.h * (elementWidth / this.transformCanvas.w)) * this.renderConfig.dpr;
+      } else {
+        this.transformCanvas.ty = 0;
+      }
+    } else if (this.renderConfig.preserveAspectRatio === 'none') {
+      this.transformCanvas.sx = elementWidth / (this.transformCanvas.w / this.renderConfig.dpr);
+      this.transformCanvas.sy = elementHeight / (this.transformCanvas.h / this.renderConfig.dpr);
+      this.transformCanvas.tx = 0;
+      this.transformCanvas.ty = 0;
+    } else {
+      this.transformCanvas.sx = this.renderConfig.dpr;
+      this.transformCanvas.sy = this.renderConfig.dpr;
+      this.transformCanvas.tx = 0;
+      this.transformCanvas.ty = 0;
+    }
+    this.transformCanvas.props = [this.transformCanvas.sx, 0, 0, 0, 0, this.transformCanvas.sy, 0, 0, 0, 0, 1, 0, this.transformCanvas.tx, this.transformCanvas.ty, 0, 1];
+    /* var i, len = this.elements.length;
+      for(i=0;i<len;i+=1){
+          if(this.elements[i] && this.elements[i].data.ty === 0){
+              this.elements[i].resize(this.globalData.transformCanvas);
+          }
+      } */
+    this.ctxTransform(this.transformCanvas.props);
+    this.canvasContext.beginPath();
+    this.canvasContext.rect(0, 0, this.transformCanvas.w, this.transformCanvas.h);
+    this.canvasContext.closePath();
+    this.canvasContext.clip();
+    this.renderFrame(this.renderedFrame, true);
+  };
+  CanvasRendererBase.prototype.destroy = function () {
+    if (this.renderConfig.clearCanvas && this.animationItem.wrapper) {
+      this.animationItem.wrapper.innerText = '';
+    }
+    var i;
+    var len = this.layers ? this.layers.length : 0;
+    for (i = len - 1; i >= 0; i -= 1) {
+      if (this.elements[i] && this.elements[i].destroy) {
+        this.elements[i].destroy();
+      }
+    }
+    this.elements.length = 0;
+    this.globalData.canvasContext = null;
+    this.animationItem.container = null;
+    this.destroyed = true;
+  };
+  CanvasRendererBase.prototype.renderFrame = function (num, forceRender) {
+    if (this.renderedFrame === num && this.renderConfig.clearCanvas === true && !forceRender || this.destroyed || num === -1) {
+      return;
+    }
+    this.renderedFrame = num;
+    this.globalData.frameNum = num - this.animationItem._isFirstFrame;
+    this.globalData.frameId += 1;
+    this.globalData._mdf = !this.renderConfig.clearCanvas || forceRender;
+    this.globalData.projectInterface.currentFrame = num;
+
+    // console.log('--------');
+    // console.log('NEW: ',num);
+    var i;
+    var len = this.layers.length;
+    if (!this.completeLayers) {
+      this.checkLayers(num);
+    }
+    for (i = len - 1; i >= 0; i -= 1) {
+      if (this.completeLayers || this.elements[i]) {
+        this.elements[i].prepareFrame(num - this.layers[i].st);
+      }
+    }
+    if (this.globalData._mdf) {
+      if (this.renderConfig.clearCanvas === true) {
+        this.canvasContext.clearRect(0, 0, this.transformCanvas.w, this.transformCanvas.h);
+      } else {
+        this.save();
+      }
+      for (i = len - 1; i >= 0; i -= 1) {
+        if (this.completeLayers || this.elements[i]) {
+          this.elements[i].renderFrame();
+        }
+      }
+      if (this.renderConfig.clearCanvas !== true) {
+        this.restore();
+      }
+    }
+    this.renderConfig.bufferManager.releaseAll();
+  };
+  CanvasRendererBase.prototype.buildItem = function (pos) {
+    var elements = this.elements;
+    if (elements[pos] || this.layers[pos].ty === 99) {
+      return;
+    }
+    var element = this.createItem(this.layers[pos], this, this.globalData);
+    elements[pos] = element;
+    element.initExpressions();
+    /* if(this.layers[pos].ty === 0){
+          element.resize(this.globalData.transformCanvas);
+      } */
+  };
+  CanvasRendererBase.prototype.checkPendingElements = function () {
+    while (this.pendingElements.length) {
+      var element = this.pendingElements.pop();
+      element.checkParenting();
+    }
+  };
+  CanvasRendererBase.prototype.hide = function () {
+    this.animationItem.container.style.display = 'none';
+  };
+  CanvasRendererBase.prototype.show = function () {
+    this.animationItem.container.style.display = 'block';
+  };
+
+  function CVCompElement(data, globalData, comp) {
+    this.completeLayers = false;
+    this.layers = data.layers;
+    this.pendingElements = [];
+    this.elements = createSizedArray(this.layers.length);
+    this.initElement(data, globalData, comp);
+    this.tm = data.tm ? PropertyFactory.getProp(this, data.tm, 0, globalData.frameRate, this) : {
+      _placeholder: true
+    };
+  }
+  extendPrototype([CanvasRendererBase, ICompElement, CVBaseElement], CVCompElement);
+  CVCompElement.prototype.renderInnerContent = function () {
+    var ctx = this.canvasContext;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(this.data.w, 0);
+    ctx.lineTo(this.data.w, this.data.h);
+    ctx.lineTo(0, this.data.h);
+    ctx.lineTo(0, 0);
+    ctx.clip();
+    var i;
+    var len = this.layers.length;
+    for (i = len - 1; i >= 0; i -= 1) {
+      if (this.completeLayers || this.elements[i]) {
+        this.elements[i].renderFrame();
+      }
+    }
+  };
+  CVCompElement.prototype.destroy = function () {
+    var i;
+    var len = this.layers.length;
+    for (i = len - 1; i >= 0; i -= 1) {
+      if (this.elements[i]) {
+        this.elements[i].destroy();
+      }
+    }
+    this.layers = null;
+    this.elements = null;
+  };
+  CVCompElement.prototype.createComp = function (data) {
+    return new CVCompElement(data, this.globalData, this);
+  };
+
+  var pool = [];
+  var checkedOut = new Set();
+  var maxWidth = 0;
+  var maxHeight = 0;
+  function reallocateIfNeeded(width, height, canvas) {
+    if (maxWidth < width) {
+      maxWidth = width;
+    }
+    if (maxHeight < height) {
+      maxHeight = height;
+    }
+    if (canvas.width < maxWidth || canvas.height < maxHeight) {
+      canvas.width = maxWidth;
+      canvas.height = maxHeight;
+    }
+  }
+  function allocate(width, height) {
+    var canvas = pool.length ? pool.pop() : assetLoader.createCanvas(width, height);
+    reallocateIfNeeded(width, height, canvas);
+    checkedOut.add(canvas);
+    return canvas;
+  }
+  function release(canvas) {
+    checkedOut["delete"](canvas);
+    pool.push(canvas);
+  }
+  function releaseAll() {
+    checkedOut.forEach(function (canvas) {
+      pool.push(canvas);
+    });
+    checkedOut.clear();
+  }
+  var bufferManager = {
+    allocate: allocate,
+    release: release,
+    releaseAll: releaseAll
+  };
+
+  function WebGLRenderer(animationItem, config) {
+    this.animationItem = animationItem;
+    this.renderConfig = {
+      clearCanvas: config && config.clearCanvas !== undefined ? config.clearCanvas : true,
+      context: config && config.context || null,
+      progressiveLoad: config && config.progressiveLoad || false,
+      preserveAspectRatio: config && config.preserveAspectRatio || 'xMidYMid meet',
+      imagePreserveAspectRatio: config && config.imagePreserveAspectRatio || 'xMidYMid slice',
+      contentVisibility: config && config.contentVisibility || 'visible',
+      className: config && config.className || '',
+      id: config && config.id || '',
+      bufferManager: bufferManager,
+      runExpressions: !config || config.runExpressions === undefined || config.runExpressions
+    };
+    this.renderConfig.dpr = config && config.dpr || 1;
+    if (this.animationItem.wrapper) {
+      this.renderConfig.dpr = config && config.dpr || window.devicePixelRatio || 1;
+    }
+    this.renderedFrame = -1;
+    this.globalData = {
+      frameNum: -1,
+      _mdf: false,
+      renderConfig: this.renderConfig,
+      currentGlobalAlpha: -1
+    };
+    this.contextData = new CVContextData();
+    this.elements = [];
+    this.pendingElements = [];
+    this.transformMat = new Matrix();
+    this.completeLayers = false;
+    this.rendererType = 'webgl';
+    if (this.renderConfig.clearCanvas) {
+      this.ctxTransform = this.contextData.transform.bind(this.contextData);
+      this.ctxOpacity = this.contextData.opacity.bind(this.contextData);
+      this.ctxFillStyle = this.contextData.fillStyle.bind(this.contextData);
+      this.ctxStrokeStyle = this.contextData.strokeStyle.bind(this.contextData);
+      this.ctxLineWidth = this.contextData.lineWidth.bind(this.contextData);
+      this.ctxLineCap = this.contextData.lineCap.bind(this.contextData);
+      this.ctxLineJoin = this.contextData.lineJoin.bind(this.contextData);
+      this.ctxMiterLimit = this.contextData.miterLimit.bind(this.contextData);
+      this.ctxFill = this.contextData.fill.bind(this.contextData);
+      this.ctxFillRect = this.contextData.fillRect.bind(this.contextData);
+      this.ctxStroke = this.contextData.stroke.bind(this.contextData);
+      this.save = this.contextData.save.bind(this.contextData);
+    }
+    this.animationItem.addEventListener('error', function (event) {
+      if (event.type === 'renderFrameError') {
+        this.renderConfig.bufferManager.releaseAll();
+      }
+    }.bind(this));
+  }
+  extendPrototype([WebGLRendererBase], WebGLRenderer);
+  WebGLRenderer.prototype.createComp = function (data) {
+    return new CVCompElement(data, this.globalData, this);
+  };
+
   // Registering renderers
-  registerRenderer('svg', SVGRenderer);
+  registerRenderer('webgl', WebGLRenderer);
 
   // Registering shape modifiers
   ShapeModifiers.registerModifier('tm', TrimModifier);

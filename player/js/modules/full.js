@@ -13,6 +13,7 @@ import OffsetPathModifier from '../utils/shapes/OffsetPathModifier';
 import CanvasRenderer from '../renderers/CanvasRenderer';
 import HybridRenderer from '../renderers/HybridRenderer';
 import SVGRenderer from '../renderers/SVGRenderer';
+import WebGLRenderer from '../renderers/WebGLRenderer';
 import {
   registerRenderer,
 } from '../renderers/renderersManager';
@@ -39,6 +40,7 @@ import { registerEffect as canvasRegisterEffect } from '../elements/canvasElemen
 registerRenderer('canvas', CanvasRenderer);
 registerRenderer('html', HybridRenderer);
 registerRenderer('svg', SVGRenderer);
+registerRenderer('webgl', WebGLRenderer);
 
 // Registering shape modifiers
 ShapeModifiers.registerModifier('tm', TrimModifier);
