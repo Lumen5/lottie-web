@@ -262,7 +262,9 @@ WebGLRendererBase.prototype.configAnimation = function (animData) {
       alpha: true,
       premultipliedAlpha: true,
       antialias: true,
-      preserveDrawingBuffer: false,
+      // Preserve so external readers (puppeteer screenshots, gl.readPixels)
+      // see the last drawn frame rather than a cleared buffer.
+      preserveDrawingBuffer: true,
     };
     this.gl = this.glCanvas.getContext('webgl', glOptions)
       || this.glCanvas.getContext('experimental-webgl', glOptions);

@@ -89,6 +89,10 @@ const animations = [
     fileName: 'igneous-title3.json',
     renderer: 'canvas',
   },
+  {
+    fileName: 'bodymovin.json',
+    renderer: 'webgl',
+  },
 ]
 
 const getSettings = async () => {
@@ -180,7 +184,15 @@ const startServer = async () => {
 const getBrowser = async () => puppeteer.launch({
   headless: true,
   defaultViewport: null,
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    // Enable WebGL in headless via SwiftShader so the webgl renderer test
+    // produces deterministic output across machines without a GPU.
+    '--enable-unsafe-swiftshader',
+    '--use-gl=swiftshader',
+    '--ignore-gpu-blocklist',
+  ],
 });
 
 const startPage = async (browser, path, renderer) => {
