@@ -114,7 +114,13 @@ CVBaseElement.prototype = {
         this.canvasContext.drawImage(lumaBuffer, 0, 0);
       }
       this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
+      // The layer opacity is applied here (not during child rendering) so that
+      // overlapping shapes within the layer are treated as an isolated group,
+      // matching SVG's group-opacity semantics.
+      var prevAlpha = this.canvasContext.globalAlpha;
+      this.canvasContext.globalAlpha = prevAlpha * this.finalTransform.localOpacity;
       this.canvasContext.drawImage(contentOfCurrentLayerCanvas, 0, 0);
+      this.canvasContext.globalAlpha = prevAlpha;
       // We finally draw the first buffer (that contains the content of the global drawing)
       // We use destination-over to draw the global drawing below the current layer
       this.canvasContext.globalCompositeOperation = 'destination-over';
@@ -142,7 +148,9 @@ CVBaseElement.prototype = {
     this.prepareLayer();
     this.globalData.renderer.save(forceRealStack);
     this.globalData.renderer.ctxTransform(this.finalTransform.localMat.props);
-    this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
+    if (!(this.data.tt >= 1)) {
+      this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
+    }
     this.renderInnerContent();
     this.globalData.renderer.restore(forceRealStack);
     this.exitLayer();

@@ -81,6 +81,14 @@ const animations = [
     fileName: 'fabric-pattern3.json',
     renderer: 'canvas',
   },
+  {
+    fileName: 'igneous-title3.json',
+    renderer: 'svg',
+  },
+  {
+    fileName: 'igneous-title3.json',
+    renderer: 'canvas',
+  },
 ]
 
 const getSettings = async () => {
