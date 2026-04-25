@@ -69,9 +69,16 @@ CVBaseElement.prototype = {
   },
   isIsolated: function () {
     // The layer needs to render to an offscreen buffer (isolated group) when
-    // it has a track matte or when its opacity is less than 1, so that
-    // overlapping shapes within the layer don't alpha-blend with each other.
-    return this.data.tt >= 1 || this.finalTransform.localOpacity < 1;
+    // it has a track matte, or when a shape/text layer with opacity below 1
+    // contains overlapping fills/strokes that would otherwise alpha-blend
+    // with each other and produce darker intersections (mismatching SVG's
+    // group-opacity semantics). Compositions, images, solids and other layer
+    // types are left alone to preserve their existing rendering behavior.
+    if (this.data.tt >= 1) {
+      return true;
+    }
+    var ty = this.data.ty;
+    return (ty === 4 || ty === 5) && this.finalTransform.localOpacity < 1;
   },
   prepareLayer: function () {
     if (this.isIsolated()) {
