@@ -92,10 +92,14 @@ const animations = [
   {
     fileName: 'title-05-landscape.json',
     renderer: 'svg',
+    background: '#ff00ff',
+    frames: [0, 10, 31, 50, 75],
   },
   {
     fileName: 'title-05-landscape.json',
     renderer: 'canvas',
+    background: '#ff00ff',
+    frames: [0, 10, 31, 50, 75],
   },
 ]
 
@@ -191,9 +195,15 @@ const getBrowser = async () => puppeteer.launch({
   args: ['--no-sandbox', '--disable-setuid-sandbox'],
 });
 
-const startPage = async (browser, path, renderer) => {
-  const targetURL = `http://localhost:9999/test/index.html\
-?path=${encodeURIComponent(path)}&renderer=${renderer}`;
+const startPage = async (browser, path, renderer, options = {}) => {
+  const params = new URLSearchParams({ path, renderer });
+  if (options.background) {
+    params.set('background', options.background);
+  }
+  if (options.frames && options.frames.length) {
+    params.set('frames', options.frames.join(','));
+  }
+  const targetURL = `http://localhost:9999/test/index.html?${params.toString()}`;
   const page = await browser.newPage();
   page.on('console', (msg) => console.log('PAGE LOG:', msg.text())); // eslint-disable-line no-console
   await page.setViewport({
@@ -306,7 +316,10 @@ async function processPage(browser, settings, directory, animation) {
     fullDirectory += `${animation.directory}/`;
   }
   const fileName = animation.fileName;
-  const page = await startPage(browser, fullDirectory + fileName, animation.renderer);
+  const page = await startPage(browser, fullDirectory + fileName, animation.renderer, {
+    background: animation.background,
+    frames: animation.frames,
+  });
   const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, '');
   let fullName = `${fileNameWithoutExtension}_${animation.renderer}`
   if (animation.directory) {
