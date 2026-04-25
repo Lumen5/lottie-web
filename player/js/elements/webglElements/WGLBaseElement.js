@@ -65,15 +65,19 @@ WGLBaseElement.prototype = {
     var forceRealStack = this.data.ty === 0;
     var blendMode = +(this.data.bm) || 0;
     var matteMode = +(this.data.tt) || 0;
-    // Lottie blend modes 1..11 (multiply, screen, overlay, darken, lighten,
-    // color-dodge, color-burn, hard-light, soft-light, difference, exclusion)
-    // are implemented via a shader composite that needs the layer rendered to
-    // its own FBO first.  Track mattes (tt 1..4) likewise need the layer
-    // rendered to its own FBO so the matte shader can sample it.  Mode 0
-    // (normal) and unsupported modes fall through to the direct-draw path.
+    // The blur effect manager (WGLGaussianBlurEffect) writes per-axis sigmas
+    // onto the element during renderRenderable above.  Default to 0 so non-
+    // blur layers don't trigger isolation.
+    var blurX = +(this._blurSigmaX) || 0;
+    var blurY = +(this._blurSigmaY) || 0;
+    // Lottie blend modes 1..11, track mattes (tt 1..4), and a non-zero
+    // Gaussian blur each force the layer to render into its own FBO so the
+    // appropriate composite/effect shaders can sample it.  Mode 0 / no blur /
+    // no matte fall through to the direct-draw path.
     var hasBlend = blendMode >= 1 && blendMode <= 11;
     var hasMatte = matteMode >= 1 && matteMode <= 4;
-    var needsIsolation = hasBlend || hasMatte;
+    var hasBlur = blurX > 0 || blurY > 0;
+    var needsIsolation = hasBlend || hasMatte || hasBlur;
     var renderer = this.globalData.renderer;
     var ctx = this.globalData.canvasContext;
 
@@ -106,6 +110,8 @@ WGLBaseElement.prototype = {
 
     if (needsIsolation) {
       ctx.endLayer({
+        blurX: blurX,
+        blurY: blurY,
         matteFBO: matteFBO,
         matteMode: matteMode,
         blendMode: blendMode,

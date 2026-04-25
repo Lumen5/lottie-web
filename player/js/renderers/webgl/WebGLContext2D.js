@@ -15,12 +15,14 @@
 // Limitations (MVP, intended foundation for further work):
 //   - Gradient fills/strokes return null and skip rendering.
 //   - clip() is a no-op (composition-rect clip is implemented via gl.scissor).
-//   - Mask paths and Gaussian blur effect are not yet supported.
+//   - Mask paths are not yet supported.
 //   - Track mattes (data.tt 1..4) are implemented: alpha, alpha-inverted,
 //     luma, luma-inverted via a composite shader.
 //   - Blend modes 1–11 are implemented (multiply, screen, overlay, darken,
 //     lighten, color-dodge, color-burn, hard-light, soft-light, difference,
 //     exclusion).  HSL modes (12–15) and modes ≥ 16 fall through to source-over.
+//   - Gaussian blur effect (type 29) is implemented as a separable two-pass
+//     shader with a fixed kernel radius.
 //   - Strokes use butt caps and basic miter/overlap joins.
 //   - Text rendering is a stub.
 
@@ -86,7 +88,39 @@ var FS_QUAD_VS = [
   '}',
 ].join('\n');
 
-// MATTE_FS: applies a track-matte texture to a layer texture.  Lottie matte
+// BLUR_FS: separable Gaussian blur — one pass along u_direction (either
+// horizontal (1, 0) or vertical (0, 1)).  Caller runs the shader twice (one
+// pass per axis) to get a 2D blur.  The kernel radius is fixed at 16 because
+// WebGL 1.0 requires constant loop bounds; weights with |i| ≫ sigma fall to
+// near-zero so a fixed-radius loop is fine for the sigma range we hit on
+// typical Lottie blur effects.
+var BLUR_FS = [
+  'precision mediump float;',
+  'varying vec2 v_uv;',
+  'uniform sampler2D u_src;',
+  'uniform vec2 u_pixelSize;',
+  'uniform vec2 u_direction;',
+  'uniform float u_sigma;',
+  'void main() {',
+  '  if (u_sigma <= 0.0) {',
+  '    gl_FragColor = texture2D(u_src, v_uv);',
+  '    return;',
+  '  }',
+  '  vec4 sum = vec4(0.0);',
+  '  float weightSum = 0.0;',
+  '  float twoSigmaSq = 2.0 * u_sigma * u_sigma;',
+  '  for (int i = 0; i < 33; i++) {',
+  '    float fi = float(i - 16);',
+  '    float w = exp(-(fi * fi) / twoSigmaSq);',
+  '    vec2 offset = u_direction * fi * u_pixelSize;',
+  '    sum += texture2D(u_src, v_uv + offset) * w;',
+  '    weightSum += w;',
+  '  }',
+  '  gl_FragColor = sum / weightSum;',
+  '}',
+].join('\n');
+
+// MATTE_FS: applies a track-matte texture to a layer texture.
 // modes (data.tt):
 //   1 — alpha matte           (mask = matte alpha)
 //   2 — alpha matte inverted  (mask = 1 − matte alpha)
@@ -349,6 +383,15 @@ function WebGLContext2D(gl) {
     matte: gl.getUniformLocation(this._matteProgram, 'u_matte'),
     mode: gl.getUniformLocation(this._matteProgram, 'u_mode'),
   };
+  this._blurProgram = link(gl, FS_QUAD_VS, BLUR_FS);
+  this._blurLocs = {
+    position: gl.getAttribLocation(this._blurProgram, 'a_position'),
+    texCoord: gl.getAttribLocation(this._blurProgram, 'a_texCoord'),
+    src: gl.getUniformLocation(this._blurProgram, 'u_src'),
+    pixelSize: gl.getUniformLocation(this._blurProgram, 'u_pixelSize'),
+    direction: gl.getUniformLocation(this._blurProgram, 'u_direction'),
+    sigma: gl.getUniformLocation(this._blurProgram, 'u_sigma'),
+  };
 
   // Static fullscreen quad in clip space (two triangles), with matching UVs.
   this._fsBuffer = gl.createBuffer();
@@ -502,6 +545,8 @@ WebGLContext2D.prototype.endMatte = function () {
 };
 
 // Pop the current isolation FBO and composite it onto the outer target.
+//   opts.blurX, blurY — per-axis Gaussian blur sigmas (effect order: applied
+//                       to the layer first, before matte and blend).
 //   opts.matteFBO   — optional FBO produced by endMatte() (released here)
 //   opts.matteMode  — Lottie matte mode (1..4) when matteFBO is provided
 //   opts.blendMode  — Lottie blend-mode id (0 = source-over, 1..11 = shader)
@@ -510,12 +555,29 @@ WebGLContext2D.prototype.endLayer = function (opts) {
   var gl = this.gl;
   var layerFBO = this._targetStack.pop();
   if (!layerFBO) return;
+  var blurX = (opts && opts.blurX) || 0;
+  var blurY = (opts && opts.blurY) || 0;
   var matteFBO = opts && opts.matteFBO;
   var matteMode = (opts && opts.matteMode) || 0;
   var blendMode = (opts && opts.blendMode) || 0;
   var opacity = (opts && opts.opacity !== undefined) ? opts.opacity : 1;
 
-  // Step 1: apply track matte (if any).  Result replaces layerFBO.
+  // Step 1: blur (per-axis separable Gaussian).  AE applies layer effects
+  // before track matte and blend mode, so blur runs first.
+  if (blurX > 0) {
+    var hBlur = this._fboPool.acquire(layerFBO.w, layerFBO.h);
+    this._drawBlurPass(layerFBO.texture, hBlur, blurX, 1, 0);
+    this._fboPool.release(layerFBO);
+    layerFBO = hBlur;
+  }
+  if (blurY > 0) {
+    var vBlur = this._fboPool.acquire(layerFBO.w, layerFBO.h);
+    this._drawBlurPass(layerFBO.texture, vBlur, blurY, 0, 1);
+    this._fboPool.release(layerFBO);
+    layerFBO = vBlur;
+  }
+
+  // Step 2: apply track matte (if any).  Result replaces layerFBO.
   if (matteFBO && matteMode >= 1 && matteMode <= 4) {
     var matted = this._fboPool.acquire(layerFBO.w, layerFBO.h);
     this._drawMatteComposite(layerFBO.texture, matteFBO.texture, matteMode, matted);
@@ -526,8 +588,8 @@ WebGLContext2D.prototype.endLayer = function (opts) {
     this._fboPool.release(matteFBO);
   }
 
-  // Step 2: composite (post-matte) layer onto outer target with blend mode
-  // and opacity.
+  // Step 3: composite (post-blur, post-matte) layer onto outer target with
+  // blend mode and opacity.
   var outer = this._currentTarget();
   this._bindCurrentTarget();
   gl.disable(gl.SCISSOR_TEST);
@@ -593,6 +655,26 @@ WebGLContext2D.prototype._presentTextureToCurrent = function (srcTexture, alpha)
   gl.uniform1i(this._copyLocs.src, 0);
   gl.uniform1f(this._copyLocs.alpha, alpha);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
+
+// One axis of a separable Gaussian blur.  Reads srcTexture, writes dstFB.
+// `sigma` is the standard deviation in pixels; (dirX, dirY) selects axis.
+WebGLContext2D.prototype._drawBlurPass = function (srcTexture, dstFB, sigma, dirX, dirY) {
+  var gl = this.gl;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, dstFB.fbo);
+  gl.viewport(0, 0, dstFB.w, dstFB.h);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.disable(gl.BLEND);
+  gl.useProgram(this._blurProgram);
+  this._bindFullscreenAttribs(this._blurLocs.position, this._blurLocs.texCoord);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, srcTexture);
+  gl.uniform1i(this._blurLocs.src, 0);
+  gl.uniform2f(this._blurLocs.pixelSize, 1 / dstFB.w, 1 / dstFB.h);
+  gl.uniform2f(this._blurLocs.direction, dirX, dirY);
+  gl.uniform1f(this._blurLocs.sigma, sigma);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.enable(gl.BLEND);
 };
 
 // Run the matte composite shader: layer × matte_factor → dstFB.
@@ -967,6 +1049,7 @@ WebGLContext2D.prototype.destroy = function () {
   if (this._copyProgram) gl.deleteProgram(this._copyProgram);
   if (this._blendProgram) gl.deleteProgram(this._blendProgram);
   if (this._matteProgram) gl.deleteProgram(this._matteProgram);
+  if (this._blurProgram) gl.deleteProgram(this._blurProgram);
   if (this._vbo) gl.deleteBuffer(this._vbo);
   if (this._uvbo) gl.deleteBuffer(this._uvbo);
   if (this._fsBuffer) gl.deleteBuffer(this._fsBuffer);
