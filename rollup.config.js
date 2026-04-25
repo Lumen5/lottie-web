@@ -135,6 +135,32 @@ const builds = [
     esm: false,
     skipTerser: true,
   },
+  {
+    input: 'player/js/modules/webgl.js',
+    dest: `${destinationBuildFolder}`,
+    file: 'lottie_webgl.min.js',
+    esm: true,
+  },
+  {
+    input: 'player/js/modules/webgl.js',
+    dest: `${destinationBuildFolder}`,
+    file: 'lottie_webgl.js',
+    esm: false,
+    skipTerser: true,
+  },
+  {
+    input: 'player/js/modules/webgl_light.js',
+    dest: `${destinationBuildFolder}`,
+    file: 'lottie_light_webgl.min.js',
+    esm: true,
+  },
+  {
+    input: 'player/js/modules/webgl_light.js',
+    dest: `${destinationBuildFolder}`,
+    file: 'lottie_light_webgl.js',
+    esm: false,
+    skipTerser: true,
+  },
 ];
 
 const plugins = [
