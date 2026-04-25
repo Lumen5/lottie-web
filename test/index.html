@@ -66,8 +66,15 @@
     window.startProcess = () => {
         const url = new URL(window.location);
         const settings = buildRenderSettings(url.searchParams)
+        const container = document.getElementById('lottie');
+        if (settings.background) {
+            container.style.background = settings.background;
+        }
+        const requestedFrames = settings.frames
+            ? settings.frames.split(',').map((value) => Number(value)).filter((value) => !Number.isNaN(value))
+            : null;
         const animation = lottie.loadAnimation({
-            container: document.getElementById('lottie'),
+            container: container,
             path: settings.path,
             autoplay: false,
             loop: false,
@@ -76,17 +83,18 @@
         animation.addEventListener('DOMLoaded', async () => {
             window.onAnimationLoaded();
             try {
-                let totalFrames = animation.totalFrames;
-                let currentFrame = 0;
-                while (currentFrame <= totalFrames) {
+                const totalFrames = animation.totalFrames;
+                const sequence = requestedFrames && requestedFrames.length
+                    ? requestedFrames
+                    : Array.from({length: totalFrames + 1}, (_, idx) => idx);
+                for (let i = 0; i < sequence.length; i += 1) {
+                    const frame = sequence[i];
                     await waitContinueCommand();
-                    animation.goToAndStop(currentFrame, true);
+                    animation.goToAndStop(frame, true);
                     await submitAndWaitForResponse(
-                        currentFrame,
-                        currentFrame === totalFrames,
+                        frame,
+                        i === sequence.length - 1,
                     );
-                    currentFrame += 1;
-
                 }
             } catch (error) {
                 console.log('ERROR', error.message);
