@@ -146,6 +146,7 @@ CanvasRendererBase.prototype.configAnimation = function (animData) {
   this.globalData.progressiveLoad = this.renderConfig.progressiveLoad;
   this.globalData.transformCanvas = this.transformCanvas;
   this.globalData.webglContext = this.renderConfig.webglContext || null;
+  this.globalData.forceWebGLBlur = !!this.renderConfig.forceWebGLBlur;
   this.globalData.getWebGLBlur = this.getWebGLBlur.bind(this);
   this.elements = createSizedArray(animData.layers.length);
 

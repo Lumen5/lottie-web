@@ -56,8 +56,12 @@ CVEffects.prototype.renderFrame = function (_isFirstFrame) {
   }
   // When `ctx.filter` doesn't honor `blur()` (Safari) and the host app has
   // supplied a WebGL context, defer the blur to the WebGL post pass and
-  // strip it from the Canvas2D filter string.
-  var useWebGLBlur = !featureSupport.canvasFilterBlur && blurSigma > 0 && !!this.globalData.webglContext;
+  // strip it from the Canvas2D filter string. `forceWebGLBlur` opts into
+  // the same path on browsers that natively support canvas filter blur,
+  // primarily so it can be exercised in tests.
+  var useWebGLBlur = (this.globalData.forceWebGLBlur || !featureSupport.canvasFilterBlur)
+    && blurSigma > 0
+    && !!this.globalData.webglContext;
   this.webglBlurSigma = useWebGLBlur ? blurSigma : 0;
   if (useWebGLBlur) {
     filterStrings = filterStrings.filter(function (str) {

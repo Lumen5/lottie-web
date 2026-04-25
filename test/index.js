@@ -82,6 +82,18 @@ const animations = [
     renderer: 'canvas',
   },
   {
+    // Exercises the WebGL blur fallback path (CVWebGLBlur). `forceWebGLBlur`
+    // makes the canvas renderer take that path on every browser, so the
+    // headless Chromium used by the harness reliably hits it.
+    fileName: 'fabric-pattern3.json',
+    renderer: 'canvas',
+    name: 'fabric-pattern3_canvas_webgl_blur',
+    timestamps: [60, 240, 480],
+    settings: {
+      forceWebGLBlur: '1',
+    },
+  },
+  {
     fileName: 'igneous-title3.json',
     renderer: 'svg',
   },
@@ -180,12 +192,30 @@ const startServer = async () => {
 const getBrowser = async () => puppeteer.launch({
   headless: true,
   defaultViewport: null,
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    // Allows WebGL to run on top of software rasterization in headless
+    // Chromium, which the WebGL blur fallback test relies on. Without this
+    // flag recent Chromium prints a deprecation warning and refuses to hand
+    // out a usable WebGL context.
+    '--enable-unsafe-swiftshader',
+  ],
 });
 
-const startPage = async (browser, path, renderer) => {
-  const targetURL = `http://localhost:9999/test/index.html\
-?path=${encodeURIComponent(path)}&renderer=${renderer}`;
+const startPage = async (browser, path, renderer, extraParams) => {
+  const params = new URLSearchParams();
+  params.set('path', path);
+  params.set('renderer', renderer);
+  if (extraParams) {
+    Object.keys(extraParams).forEach((key) => {
+      const value = extraParams[key];
+      if (value !== undefined && value !== null) {
+        params.set(key, String(value));
+      }
+    });
+  }
+  const targetURL = `http://localhost:9999/test/index.html?${params.toString()}`;
   const page = await browser.newPage();
   page.on('console', (msg) => console.log('PAGE LOG:', msg.text())); // eslint-disable-line no-console
   await page.setViewport({
@@ -298,10 +328,14 @@ async function processPage(browser, settings, directory, animation) {
     fullDirectory += `${animation.directory}/`;
   }
   const fileName = animation.fileName;
-  const page = await startPage(browser, fullDirectory + fileName, animation.renderer);
+  const extraParams = { ...(animation.settings || {}) };
+  if (animation.timestamps && animation.timestamps.length) {
+    extraParams.timestamps = animation.timestamps.join(',');
+  }
+  const page = await startPage(browser, fullDirectory + fileName, animation.renderer, extraParams);
   const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, '');
-  let fullName = `${fileNameWithoutExtension}_${animation.renderer}`
-  if (animation.directory) {
+  let fullName = animation.name || `${fileNameWithoutExtension}_${animation.renderer}`;
+  if (!animation.name && animation.directory) {
     fullName = `${animation.directory}_` + fullName;
   }
   await createIndividualAssets(page, fullName, settings);
