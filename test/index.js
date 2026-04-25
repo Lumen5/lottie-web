@@ -89,6 +89,14 @@ const animations = [
     fileName: 'igneous-title3.json',
     renderer: 'canvas',
   },
+  {
+    fileName: 'title-05-landscape.json',
+    renderer: 'svg',
+  },
+  {
+    fileName: 'title-05-landscape.json',
+    renderer: 'canvas',
+  },
 ]
 
 const getSettings = async () => {
