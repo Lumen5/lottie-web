@@ -64,12 +64,16 @@ WGLBaseElement.prototype = {
     this.setBlendMode();
     var forceRealStack = this.data.ty === 0;
     var blendMode = +(this.data.bm) || 0;
+    var matteMode = +(this.data.tt) || 0;
     // Lottie blend modes 1..11 (multiply, screen, overlay, darken, lighten,
     // color-dodge, color-burn, hard-light, soft-light, difference, exclusion)
     // are implemented via a shader composite that needs the layer rendered to
-    // its own FBO first.  Mode 0 (normal) and modes ≥ 12 fall through to the
-    // direct-draw path.
-    var needsIsolation = blendMode >= 1 && blendMode <= 11;
+    // its own FBO first.  Track mattes (tt 1..4) likewise need the layer
+    // rendered to its own FBO so the matte shader can sample it.  Mode 0
+    // (normal) and unsupported modes fall through to the direct-draw path.
+    var hasBlend = blendMode >= 1 && blendMode <= 11;
+    var hasMatte = matteMode >= 1 && matteMode <= 4;
+    var needsIsolation = hasBlend || hasMatte;
     var renderer = this.globalData.renderer;
     var ctx = this.globalData.canvasContext;
 
@@ -85,8 +89,25 @@ WGLBaseElement.prototype = {
     this.renderInnerContent();
     renderer.restore(forceRealStack);
 
+    var matteFBO = null;
+    if (hasMatte && this.comp) {
+      // The matte source layer is referenced either by data.tp (track-matte
+      // parent index) or by the layer immediately above (data.ind - 1).  It
+      // is normally hidden because td === 1; we force-render it into its own
+      // FBO so the matte shader can sample it.
+      var matteRef = ('tp' in this.data) ? this.data.tp : this.data.ind - 1;
+      var matteLayer = this.comp.getElementById(matteRef);
+      if (matteLayer) {
+        ctx.beginMatte();
+        matteLayer.renderFrame(true);
+        matteFBO = ctx.endMatte();
+      }
+    }
+
     if (needsIsolation) {
       ctx.endLayer({
+        matteFBO: matteFBO,
+        matteMode: matteMode,
         blendMode: blendMode,
         opacity: this.finalTransform.localOpacity,
       });

@@ -13892,12 +13892,16 @@
       this.setBlendMode();
       var forceRealStack = this.data.ty === 0;
       var blendMode = +this.data.bm || 0;
+      var matteMode = +this.data.tt || 0;
       // Lottie blend modes 1..11 (multiply, screen, overlay, darken, lighten,
       // color-dodge, color-burn, hard-light, soft-light, difference, exclusion)
       // are implemented via a shader composite that needs the layer rendered to
-      // its own FBO first.  Mode 0 (normal) and modes ≥ 12 fall through to the
-      // direct-draw path.
-      var needsIsolation = blendMode >= 1 && blendMode <= 11;
+      // its own FBO first.  Track mattes (tt 1..4) likewise need the layer
+      // rendered to its own FBO so the matte shader can sample it.  Mode 0
+      // (normal) and unsupported modes fall through to the direct-draw path.
+      var hasBlend = blendMode >= 1 && blendMode <= 11;
+      var hasMatte = matteMode >= 1 && matteMode <= 4;
+      var needsIsolation = hasBlend || hasMatte;
       var renderer = this.globalData.renderer;
       var ctx = this.globalData.canvasContext;
       if (needsIsolation) {
@@ -13910,8 +13914,24 @@
       }
       this.renderInnerContent();
       renderer.restore(forceRealStack);
+      var matteFBO = null;
+      if (hasMatte && this.comp) {
+        // The matte source layer is referenced either by data.tp (track-matte
+        // parent index) or by the layer immediately above (data.ind - 1).  It
+        // is normally hidden because td === 1; we force-render it into its own
+        // FBO so the matte shader can sample it.
+        var matteRef = 'tp' in this.data ? this.data.tp : this.data.ind - 1;
+        var matteLayer = this.comp.getElementById(matteRef);
+        if (matteLayer) {
+          ctx.beginMatte();
+          matteLayer.renderFrame(true);
+          matteFBO = ctx.endMatte();
+        }
+      }
       if (needsIsolation) {
         ctx.endLayer({
+          matteFBO: matteFBO,
+          matteMode: matteMode,
           blendMode: blendMode,
           opacity: this.finalTransform.localOpacity
         });
@@ -14743,6 +14763,18 @@
   // outer target.
   var FS_QUAD_VS = ['attribute vec2 a_position;', 'attribute vec2 a_texCoord;', 'varying vec2 v_uv;', 'void main() {', '  v_uv = a_texCoord;', '  gl_Position = vec4(a_position, 0.0, 1.0);', '}'].join('\n');
 
+  // MATTE_FS: applies a track-matte texture to a layer texture.  Lottie matte
+  // modes (data.tt):
+  //   1 — alpha matte           (mask = matte alpha)
+  //   2 — alpha matte inverted  (mask = 1 − matte alpha)
+  //   3 — luma matte            (mask = luma of matte rgb, already weighted by
+  //                              its alpha because the texture is premultiplied)
+  //   4 — luma matte inverted   (mask = 1 − luma)
+  // The output is the layer texture multiplied by the per-pixel mask factor.
+  // Both inputs are premultiplied; multiplying both rgb and alpha by a scalar
+  // keeps the result premultiplied.
+  var MATTE_FS = ['precision mediump float;', 'varying vec2 v_uv;', 'uniform sampler2D u_src;', 'uniform sampler2D u_matte;', 'uniform int u_mode;', 'const vec3 LUMA_W = vec3(0.2126, 0.7152, 0.0722);', 'void main() {', '  vec4 src = texture2D(u_src, v_uv);', '  vec4 m = texture2D(u_matte, v_uv);', '  float factor = 1.0;', '  if (u_mode == 1) factor = m.a;', '  else if (u_mode == 2) factor = 1.0 - m.a;', '  else if (u_mode == 3) factor = dot(m.rgb, LUMA_W);', '  else if (u_mode == 4) factor = 1.0 - dot(m.rgb, LUMA_W);', '  gl_FragColor = src * factor;', '}'].join('\n');
+
   // COPY_FS: sample a texture, optionally scaled by u_alpha (premultiplied).
   // Used for FBO→canvas presentation, FBO→FBO snapshots, and the source-over
   // composite of an isolated layer onto its outer target.
@@ -14915,6 +14947,14 @@
       alpha: gl.getUniformLocation(this._blendProgram, 'u_alpha'),
       mode: gl.getUniformLocation(this._blendProgram, 'u_mode')
     };
+    this._matteProgram = link(gl, FS_QUAD_VS, MATTE_FS);
+    this._matteLocs = {
+      position: gl.getAttribLocation(this._matteProgram, 'a_position'),
+      texCoord: gl.getAttribLocation(this._matteProgram, 'a_texCoord'),
+      src: gl.getUniformLocation(this._matteProgram, 'u_src'),
+      matte: gl.getUniformLocation(this._matteProgram, 'u_matte'),
+      mode: gl.getUniformLocation(this._matteProgram, 'u_mode')
+    };
 
     // Static fullscreen quad in clip space (two triangles), with matching UVs.
     this._fsBuffer = gl.createBuffer();
@@ -15041,15 +15081,47 @@
     gl.clear(gl.COLOR_BUFFER_BIT);
   };
 
+  // Push a fresh FBO for rendering a track-matte source layer into.  Same
+  // mechanics as beginLayer; the separate name documents intent in the caller.
+  WebGLContext2D.prototype.beginMatte = function () {
+    this.beginLayer();
+  };
+
+  // Pop the matte FBO and return it.  The caller passes it to endLayer({ matteFBO })
+  // which is responsible for releasing the FBO back to the pool.
+  WebGLContext2D.prototype.endMatte = function () {
+    var fb = this._targetStack.pop();
+    this._bindCurrentTarget();
+    return fb;
+  };
+
   // Pop the current isolation FBO and composite it onto the outer target.
+  //   opts.matteFBO   — optional FBO produced by endMatte() (released here)
+  //   opts.matteMode  — Lottie matte mode (1..4) when matteFBO is provided
   //   opts.blendMode  — Lottie blend-mode id (0 = source-over, 1..11 = shader)
-  //   opts.opacity    — final layer opacity multiplier
+  //   opts.opacity    — final layer opacity multiplier (applied after matte)
   WebGLContext2D.prototype.endLayer = function (opts) {
     var gl = this.gl;
     var layerFBO = this._targetStack.pop();
     if (!layerFBO) return;
+    var matteFBO = opts && opts.matteFBO;
+    var matteMode = opts && opts.matteMode || 0;
     var blendMode = opts && opts.blendMode || 0;
     var opacity = opts && opts.opacity !== undefined ? opts.opacity : 1;
+
+    // Step 1: apply track matte (if any).  Result replaces layerFBO.
+    if (matteFBO && matteMode >= 1 && matteMode <= 4) {
+      var matted = this._fboPool.acquire(layerFBO.w, layerFBO.h);
+      this._drawMatteComposite(layerFBO.texture, matteFBO.texture, matteMode, matted);
+      this._fboPool.release(layerFBO);
+      layerFBO = matted;
+    }
+    if (matteFBO) {
+      this._fboPool.release(matteFBO);
+    }
+
+    // Step 2: composite (post-matte) layer onto outer target with blend mode
+    // and opacity.
     var outer = this._currentTarget();
     this._bindCurrentTarget();
     gl.disable(gl.SCISSOR_TEST);
@@ -15113,6 +15185,30 @@
     gl.uniform1i(this._copyLocs.src, 0);
     gl.uniform1f(this._copyLocs.alpha, alpha);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+
+  // Run the matte composite shader: layer × matte_factor → dstFB.
+  // Used to apply a track matte (alpha or luma, optionally inverted) to a
+  // layer's FBO.  Blending is disabled because we're producing a fresh
+  // premultiplied output, not compositing onto an existing destination.
+  WebGLContext2D.prototype._drawMatteComposite = function (srcTexture, matteTexture, mode, dstFB) {
+    var gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dstFB.fbo);
+    gl.viewport(0, 0, dstFB.w, dstFB.h);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this._matteProgram);
+    this._bindFullscreenAttribs(this._matteLocs.position, this._matteLocs.texCoord);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, srcTexture);
+    gl.uniform1i(this._matteLocs.src, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, matteTexture);
+    gl.uniform1i(this._matteLocs.matte, 1);
+    gl.uniform1i(this._matteLocs.mode, mode);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.enable(gl.BLEND);
   };
 
   // Run the blend-mode shader: source = layer FBO, destination = outer
@@ -15436,6 +15532,7 @@
     if (this._texProgram) gl.deleteProgram(this._texProgram);
     if (this._copyProgram) gl.deleteProgram(this._copyProgram);
     if (this._blendProgram) gl.deleteProgram(this._blendProgram);
+    if (this._matteProgram) gl.deleteProgram(this._matteProgram);
     if (this._vbo) gl.deleteBuffer(this._vbo);
     if (this._uvbo) gl.deleteBuffer(this._uvbo);
     if (this._fsBuffer) gl.deleteBuffer(this._fsBuffer);
