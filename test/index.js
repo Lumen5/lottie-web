@@ -92,6 +92,7 @@ const animations = [
   {
     fileName: 'bodymovin.json',
     renderer: 'webgl',
+    frames: [0, 30, 60, 90, 120],
   },
 ]
 
@@ -195,9 +196,12 @@ const getBrowser = async () => puppeteer.launch({
   ],
 });
 
-const startPage = async (browser, path, renderer) => {
-  const targetURL = `http://localhost:9999/test/index.html\
+const startPage = async (browser, path, renderer, frames) => {
+  let targetURL = `http://localhost:9999/test/index.html\
 ?path=${encodeURIComponent(path)}&renderer=${renderer}`;
+  if (Array.isArray(frames) && frames.length) {
+    targetURL += `&frames=${encodeURIComponent(frames.join(','))}`;
+  }
   const page = await browser.newPage();
   page.on('console', (msg) => console.log('PAGE LOG:', msg.text())); // eslint-disable-line no-console
   await page.setViewport({
@@ -310,7 +314,7 @@ async function processPage(browser, settings, directory, animation) {
     fullDirectory += `${animation.directory}/`;
   }
   const fileName = animation.fileName;
-  const page = await startPage(browser, fullDirectory + fileName, animation.renderer);
+  const page = await startPage(browser, fullDirectory + fileName, animation.renderer, animation.frames);
   const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, '');
   let fullName = `${fileNameWithoutExtension}_${animation.renderer}`
   if (animation.directory) {
