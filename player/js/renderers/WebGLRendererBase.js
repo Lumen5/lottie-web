@@ -1,3 +1,17 @@
+// Native WebGL renderer for Lottie.
+//
+// All geometry is drawn through real WebGL draw calls — there is no offscreen
+// 2D canvas rasterization step. Shape paths are tessellated into triangles
+// (renderers/webgl/Tessellator.js), uploaded to a vertex buffer, and rendered
+// via custom shader programs (renderers/webgl/WebGLContext2D.js). Image layers
+// upload their bitmap as a texture and draw a textured quad.
+//
+// Element classes live in elements/webglElements/ and are independent of the
+// canvas renderer's CV* classes. Shared utilities (ShapePropertyFactory,
+// ShapeTransformManager, ShapeModifiers, BaseElement, TransformElement, …)
+// are reused — those are renderer-agnostic and parse Lottie animation data,
+// they do not perform rendering.
+
 import {
   extendPrototype,
 } from '../utils/functionExtensions';
@@ -7,35 +21,37 @@ import {
 import createTag from '../utils/helpers/html_elements';
 import SVGRenderer from './SVGRenderer';
 import BaseRenderer from './BaseRenderer';
-import CVShapeElement from '../elements/canvasElements/CVShapeElement';
-import CVTextElement from '../elements/canvasElements/CVTextElement';
-import CVImageElement from '../elements/canvasElements/CVImageElement';
-import CVSolidElement from '../elements/canvasElements/CVSolidElement';
+import WGLShapeElement from '../elements/webglElements/WGLShapeElement';
+import WGLTextElement from '../elements/webglElements/WGLTextElement';
+import WGLImageElement from '../elements/webglElements/WGLImageElement';
+import WGLSolidElement from '../elements/webglElements/WGLSolidElement';
+import WebGLContext2D from './webgl/WebGLContext2D';
 
 function WebGLRendererBase() {
 }
 extendPrototype([BaseRenderer], WebGLRendererBase);
 
 WebGLRendererBase.prototype.createShape = function (data) {
-  return new CVShapeElement(data, this.globalData, this);
+  return new WGLShapeElement(data, this.globalData, this);
 };
 
 WebGLRendererBase.prototype.createText = function (data) {
-  return new CVTextElement(data, this.globalData, this);
+  return new WGLTextElement(data, this.globalData, this);
 };
 
 WebGLRendererBase.prototype.createImage = function (data) {
-  return new CVImageElement(data, this.globalData, this);
+  return new WGLImageElement(data, this.globalData, this);
 };
 
 WebGLRendererBase.prototype.createSolid = function (data) {
-  return new CVSolidElement(data, this.globalData, this);
+  return new WGLSolidElement(data, this.globalData, this);
 };
 
 WebGLRendererBase.prototype.createNull = SVGRenderer.prototype.createNull;
 
-// 2D canvas pass-through helpers (elements draw into an offscreen 2D canvas
-// that we later upload to a GL texture).
+// State / draw forwarders. CV* analogues live on CanvasRendererBase; ours
+// route to WGLContextData, which forwards to the WebGLContext2D adapter, which
+// emits real WebGL draw calls.
 WebGLRendererBase.prototype.ctxTransform = function (props) {
   if (props[0] === 1 && props[1] === 0 && props[4] === 0 && props[5] === 1 && props[12] === 0 && props[13] === 0) {
     return;
@@ -106,139 +122,8 @@ WebGLRendererBase.prototype.restore = function (actionFlag) {
   this.contextData.restore(actionFlag);
 };
 
-// WebGL helpers
-var QUAD_VERTEX_SHADER = [
-  'attribute vec2 a_position;',
-  'attribute vec2 a_texCoord;',
-  'varying vec2 v_texCoord;',
-  'void main() {',
-  '  gl_Position = vec4(a_position, 0.0, 1.0);',
-  '  v_texCoord = a_texCoord;',
-  '}',
-].join('\n');
-
-var QUAD_FRAGMENT_SHADER = [
-  'precision mediump float;',
-  'uniform sampler2D u_texture;',
-  'varying vec2 v_texCoord;',
-  'void main() {',
-  '  gl_FragColor = texture2D(u_texture, v_texCoord);',
-  '}',
-].join('\n');
-
-function compileShader(gl, type, source) {
-  var shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    var info = gl.getShaderInfoLog(shader);
-    gl.deleteShader(shader);
-    throw new Error('WebGL shader compile failed: ' + info);
-  }
-  return shader;
-}
-
-function linkProgram(gl, vsSource, fsSource) {
-  var vs = compileShader(gl, gl.VERTEX_SHADER, vsSource);
-  var fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSource);
-  var program = gl.createProgram();
-  gl.attachShader(program, vs);
-  gl.attachShader(program, fs);
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    var info = gl.getProgramInfoLog(program);
-    gl.deleteProgram(program);
-    throw new Error('WebGL program link failed: ' + info);
-  }
-  return program;
-}
-
-WebGLRendererBase.prototype.initWebGL = function () {
-  var gl = this.gl;
-  this.glProgram = linkProgram(gl, QUAD_VERTEX_SHADER, QUAD_FRAGMENT_SHADER);
-  this.glAttribs = {
-    position: gl.getAttribLocation(this.glProgram, 'a_position'),
-    texCoord: gl.getAttribLocation(this.glProgram, 'a_texCoord'),
-  };
-  this.glUniforms = {
-    texture: gl.getUniformLocation(this.glProgram, 'u_texture'),
-  };
-
-  // Fullscreen quad (clip-space) and matching texture coordinates.
-  // The texture is flipped vertically so that the 2D canvas (which has y-down
-  // origin) appears the right way up in WebGL (y-up clip space).
-  this.glPositionBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.glPositionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-    -1, -1,
-    1, -1,
-    -1, 1,
-    -1, 1,
-    1, -1,
-    1, 1,
-  ]), gl.STATIC_DRAW);
-
-  this.glTexCoordBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.glTexCoordBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-    0, 1,
-    1, 1,
-    0, 0,
-    0, 0,
-    1, 1,
-    1, 0,
-  ]), gl.STATIC_DRAW);
-
-  this.glTexture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, this.glTexture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-
-  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-  gl.disable(gl.DEPTH_TEST);
-};
-
-WebGLRendererBase.prototype.presentToWebGL = function () {
-  var gl = this.gl;
-  if (!gl) {
-    return;
-  }
-  var sourceCanvas = this.offscreenCanvas;
-  var glCanvas = this.glCanvas;
-  if (glCanvas.width !== sourceCanvas.width || glCanvas.height !== sourceCanvas.height) {
-    glCanvas.width = sourceCanvas.width;
-    glCanvas.height = sourceCanvas.height;
-  }
-
-  gl.viewport(0, 0, glCanvas.width, glCanvas.height);
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  gl.useProgram(this.glProgram);
-
-  gl.bindTexture(gl.TEXTURE_2D, this.glTexture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
-  gl.uniform1i(this.glUniforms.texture, 0);
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.glPositionBuffer);
-  gl.enableVertexAttribArray(this.glAttribs.position);
-  gl.vertexAttribPointer(this.glAttribs.position, 2, gl.FLOAT, false, 0, 0);
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.glTexCoordBuffer);
-  gl.enableVertexAttribArray(this.glAttribs.texCoord);
-  gl.vertexAttribPointer(this.glAttribs.texCoord, 2, gl.FLOAT, false, 0, 0);
-
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-};
-
 WebGLRendererBase.prototype.configAnimation = function (animData) {
   if (this.animationItem.wrapper) {
-    // The visible container is a WebGL canvas; the actual drawing happens on
-    // an offscreen 2D canvas that we upload as a texture each frame.
     this.glCanvas = createTag('canvas');
     var containerStyle = this.glCanvas.style;
     containerStyle.width = '100%';
@@ -262,8 +147,6 @@ WebGLRendererBase.prototype.configAnimation = function (animData) {
       alpha: true,
       premultipliedAlpha: true,
       antialias: true,
-      // Preserve so external readers (puppeteer screenshots, gl.readPixels)
-      // see the last drawn frame rather than a cleared buffer.
       preserveDrawingBuffer: true,
     };
     this.gl = this.glCanvas.getContext('webgl', glOptions)
@@ -271,19 +154,12 @@ WebGLRendererBase.prototype.configAnimation = function (animData) {
     if (!this.gl) {
       throw new Error('WebGL is not supported in this environment.');
     }
-
-    this.offscreenCanvas = createTag('canvas');
-    this.canvasContext = this.offscreenCanvas.getContext('2d');
-    this.initWebGL();
   } else {
-    // Allow callers to provide an existing WebGL context. We still need a 2D
-    // canvas to rasterize into.
     this.gl = this.renderConfig.context;
     this.glCanvas = this.gl.canvas;
-    this.offscreenCanvas = createTag('canvas');
-    this.canvasContext = this.offscreenCanvas.getContext('2d');
-    this.initWebGL();
   }
+
+  this.canvasContext = new WebGLContext2D(this.gl);
   this.contextData.setContext(this.canvasContext);
   this.data = animData;
   this.layers = animData.layers;
@@ -313,8 +189,8 @@ WebGLRendererBase.prototype.updateContainerSize = function (width, height) {
   if (width) {
     elementWidth = width;
     elementHeight = height;
-    this.offscreenCanvas.width = elementWidth;
-    this.offscreenCanvas.height = elementHeight;
+    this.glCanvas.width = elementWidth;
+    this.glCanvas.height = elementHeight;
   } else {
     if (this.animationItem.wrapper && this.glCanvas) {
       elementWidth = this.animationItem.wrapper.offsetWidth;
@@ -323,11 +199,9 @@ WebGLRendererBase.prototype.updateContainerSize = function (width, height) {
       elementWidth = this.glCanvas.width;
       elementHeight = this.glCanvas.height;
     }
-    this.offscreenCanvas.width = elementWidth * this.renderConfig.dpr;
-    this.offscreenCanvas.height = elementHeight * this.renderConfig.dpr;
+    this.glCanvas.width = elementWidth * this.renderConfig.dpr;
+    this.glCanvas.height = elementHeight * this.renderConfig.dpr;
   }
-  this.glCanvas.width = this.offscreenCanvas.width;
-  this.glCanvas.height = this.offscreenCanvas.height;
 
   var elementRel;
   var animationRel;
@@ -373,12 +247,6 @@ WebGLRendererBase.prototype.updateContainerSize = function (width, height) {
     this.transformCanvas.ty = 0;
   }
   this.transformCanvas.props = [this.transformCanvas.sx, 0, 0, 0, 0, this.transformCanvas.sy, 0, 0, 0, 0, 1, 0, this.transformCanvas.tx, this.transformCanvas.ty, 0, 1];
-  this.ctxTransform(this.transformCanvas.props);
-  this.canvasContext.beginPath();
-  this.canvasContext.rect(0, 0, this.transformCanvas.w, this.transformCanvas.h);
-  this.canvasContext.closePath();
-  this.canvasContext.clip();
-
   this.renderFrame(this.renderedFrame, true);
 };
 
@@ -394,16 +262,10 @@ WebGLRendererBase.prototype.destroy = function () {
     }
   }
   this.elements.length = 0;
-  if (this.gl) {
-    if (this.glTexture) this.gl.deleteTexture(this.glTexture);
-    if (this.glPositionBuffer) this.gl.deleteBuffer(this.glPositionBuffer);
-    if (this.glTexCoordBuffer) this.gl.deleteBuffer(this.glTexCoordBuffer);
-    if (this.glProgram) this.gl.deleteProgram(this.glProgram);
-  }
+  if (this.canvasContext) this.canvasContext.destroy();
+  this.canvasContext = null;
   this.gl = null;
   this.glCanvas = null;
-  this.offscreenCanvas = null;
-  this.canvasContext = null;
   this.globalData.canvasContext = null;
   this.animationItem.container = null;
   this.destroyed = true;
@@ -431,20 +293,22 @@ WebGLRendererBase.prototype.renderFrame = function (num, forceRender) {
     }
   }
   if (this.globalData._mdf) {
-    if (this.renderConfig.clearCanvas === true) {
-      this.canvasContext.clearRect(0, 0, this.transformCanvas.w, this.transformCanvas.h);
-    } else {
-      this.save();
-    }
+    this.canvasContext.beginFrame(this.glCanvas.width, this.glCanvas.height);
+    this.contextData.reset();
+    this.ctxTransform(this.transformCanvas.props);
+    // Scissor to composition bounds (gl.scissor takes pixel coordinates).
+    this.canvasContext.setScissor(
+      this.transformCanvas.tx,
+      this.transformCanvas.ty,
+      this.transformCanvas.w * this.transformCanvas.sx,
+      this.transformCanvas.h * this.transformCanvas.sy
+    );
+
     for (i = len - 1; i >= 0; i -= 1) {
       if (this.completeLayers || this.elements[i]) {
         this.elements[i].renderFrame();
       }
     }
-    if (this.renderConfig.clearCanvas !== true) {
-      this.restore();
-    }
-    this.presentToWebGL();
   }
   this.renderConfig.bufferManager.releaseAll();
 };

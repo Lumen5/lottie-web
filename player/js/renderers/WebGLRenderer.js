@@ -3,8 +3,8 @@ import {
 } from '../utils/functionExtensions';
 import Matrix from '../3rd_party/transformation-matrix';
 import WebGLRendererBase from './WebGLRendererBase';
-import CVContextData from '../elements/canvasElements/CVContextData';
-import CVCompElement from '../elements/canvasElements/CVCompElement';
+import WGLContextData from '../elements/webglElements/WGLContextData';
+import WGLCompElement from '../elements/webglElements/WGLCompElement';
 import bufferManager from '../utils/helpers/bufferManager';
 
 function WebGLRenderer(animationItem, config) {
@@ -32,7 +32,7 @@ function WebGLRenderer(animationItem, config) {
     renderConfig: this.renderConfig,
     currentGlobalAlpha: -1,
   };
-  this.contextData = new CVContextData();
+  this.contextData = new WGLContextData();
   this.elements = [];
   this.pendingElements = [];
   this.transformMat = new Matrix();
@@ -61,7 +61,7 @@ function WebGLRenderer(animationItem, config) {
 extendPrototype([WebGLRendererBase], WebGLRenderer);
 
 WebGLRenderer.prototype.createComp = function (data) {
-  return new CVCompElement(data, this.globalData, this);
+  return new WGLCompElement(data, this.globalData, this);
 };
 
 export default WebGLRenderer;
