@@ -36,10 +36,16 @@ CVMaskElement.prototype.renderFrame = function () {
   var pt;
   var pts;
   var data;
+  var hasInvertedMask = false;
   ctx.beginPath();
   for (i = 0; i < len; i += 1) {
-    if (this.masksProperties[i].mode !== 'n') {
-      if (this.masksProperties[i].inv) {
+    var mask = this.masksProperties[i];
+    if (mask.mode !== 'n') {
+      // 's' (subtract) carves the path out of the layer; the per-mask 'inv'
+      // flag inverts that. Two flips cancel, so XOR them.
+      var inverted = (mask.mode === 's') !== !!mask.inv;
+      if (inverted) {
+        hasInvertedMask = true;
         ctx.moveTo(0, 0);
         ctx.lineTo(this.element.globalData.compSize.w, 0);
         ctx.lineTo(this.element.globalData.compSize.w, this.element.globalData.compSize.h);
@@ -60,7 +66,9 @@ CVMaskElement.prototype.renderFrame = function () {
     }
   }
   this.element.globalData.renderer.save(true);
-  ctx.clip();
+  // Use even-odd so the outer rect and the path cancel inside the path,
+  // independent of the mask path's winding direction.
+  ctx.clip(hasInvertedMask ? 'evenodd' : 'nonzero');
 };
 
 CVMaskElement.prototype.getMaskProperty = MaskElement.prototype.getMaskProperty;
