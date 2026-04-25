@@ -89,6 +89,16 @@ const animations = [
     fileName: 'igneous-title3.json',
     renderer: 'canvas',
   },
+  {
+    fileName: 'igneous-text6.json',
+    renderer: 'svg',
+    frames: [0, 10, 20, 30, 38],
+  },
+  {
+    fileName: 'igneous-text6.json',
+    renderer: 'canvas',
+    frames: [0, 10, 20, 30, 38],
+  },
 ]
 
 const getSettings = async () => {
@@ -244,14 +254,14 @@ const compareFiles = (folderName, fileName) => {
     }
 }
 
-const createIndividualAssets = async (page, folderName, settings) => {
+const createIndividualAssets = async (page, folderName, settings, frames) => {
   const filePath = `${settings.step === 'create' ? createDirectory : compareDirectory}/${folderName}`;
   createDirectoryPath(filePath);
   let isLastFrame = false;
   const bridgeHelper = await (createBridgeHelper(page));
-  page.evaluate(() => {
-    window.startProcess();
-  });
+  page.evaluate((customFrames) => {
+    window.startProcess(customFrames);
+  }, frames || null);
   await bridgeHelper.waitForAnimationLoaded();
   while (!isLastFrame) {
     // Disabling rule because execution can't be parallelized
@@ -304,7 +314,7 @@ async function processPage(browser, settings, directory, animation) {
   if (animation.directory) {
     fullName = `${animation.directory}_` + fullName;
   }
-  await createIndividualAssets(page, fullName, settings);
+  await createIndividualAssets(page, fullName, settings, animation.frames);
   await page.close();
 }
 
