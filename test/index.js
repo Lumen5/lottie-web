@@ -192,6 +192,12 @@ const startServer = async () => {
 const getBrowser = async () => puppeteer.launch({
   headless: true,
   defaultViewport: null,
+  // The WebGL blur fallback test runs on software-rasterized GL, which is
+  // markedly slower than native, so a single CDP evaluate (e.g. seeking a
+  // frame and waiting for it to finish rendering) can exceed puppeteer's
+  // default 30s protocol timeout. Bumping it gives those evaluates room to
+  // complete without making non-WebGL tests any slower.
+  protocolTimeout: 120000,
   args: [
     '--no-sandbox',
     '--disable-setuid-sandbox',

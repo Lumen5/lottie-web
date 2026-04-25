@@ -115,7 +115,6 @@ function CVWebGLBlur(gl) {
   this.uploadTex = null;
   this.fboWidth = 0;
   this.fboHeight = 0;
-  this.pixelBuffer = null;
 }
 
 CVWebGLBlur.prototype.init = function () {
@@ -158,7 +157,6 @@ CVWebGLBlur.prototype.ensureFbos = function (width, height) {
   this.pongFbo = makeFbo(gl, this.pongTex);
   this.fboWidth = width;
   this.fboHeight = height;
-  this.pixelBuffer = new Uint8Array(width * height * 4);
 };
 
 CVWebGLBlur.prototype.saveState = function () {
@@ -177,7 +175,6 @@ CVWebGLBlur.prototype.saveState = function () {
     unpackFlipY: gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL),
     unpackPremultiplyAlpha: gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL),
     unpackAlignment: gl.getParameter(gl.UNPACK_ALIGNMENT),
-    packAlignment: gl.getParameter(gl.PACK_ALIGNMENT),
   };
   gl.activeTexture(gl.TEXTURE0);
   saved.texture0 = gl.getParameter(gl.TEXTURE_BINDING_2D);
@@ -201,7 +198,6 @@ CVWebGLBlur.prototype.restoreState = function (saved) {
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, saved.unpackFlipY);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, saved.unpackPremultiplyAlpha);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, saved.unpackAlignment);
-  gl.pixelStorei(gl.PACK_ALIGNMENT, saved.packAlignment);
 };
 
 CVWebGLBlur.prototype.runPass = function (srcTex, dstFbo, weights, dirX, dirY, width, height) {
@@ -219,6 +215,13 @@ CVWebGLBlur.prototype.runPass = function (srcTex, dstFbo, weights, dirX, dirY, w
 // Apply Gaussian blur of `sigma` (in canvas pixels) to `sourceCanvas`.
 // On return the same canvas holds the blurred pixels. Drawing transform
 // and composite state of the supplied 2d context are preserved.
+//
+// The final pass renders into the host's WebGL canvas drawing buffer,
+// which is then transferred back via `ctx.drawImage(glCanvas, ...)`.
+// This avoids the slow `gl.readPixels` + `putImageData` round-trip and
+// the GPU stalls it triggers. The host's drawing buffer is treated as
+// scratch space, matching the contract that lottie-web is borrowing the
+// context temporarily.
 CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
   if (!sigma || sigma <= 0) return;
   var width = sourceCanvas.width;
@@ -231,6 +234,12 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
   var gl = this.gl;
   if (gl.isContextLost && gl.isContextLost()) return;
 
+  var glCanvas = gl.canvas;
+  var prevCanvasW = glCanvas.width;
+  var prevCanvasH = glCanvas.height;
+  if (prevCanvasW !== width) glCanvas.width = width;
+  if (prevCanvasH !== height) glCanvas.height = height;
+
   var saved = this.saveState();
   try {
     this.ensureFbos(width, height);
@@ -242,7 +251,6 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
 
     gl.useProgram(this.program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
@@ -265,33 +273,48 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
     var srcTex = this.uploadTex;
     for (var p = 0; p < passes; p += 1) {
       this.runPass(srcTex, this.pingFbo, weights, 1, 0, width, height);
-      this.runPass(this.pingTex, this.pongFbo, weights, 0, 1, width, height);
-      srcTex = this.pongTex;
+      var isLastPass = p === passes - 1;
+      if (isLastPass) {
+        // The final vertical pass writes directly to the WebGL canvas's
+        // default framebuffer, so the result is available to drawImage.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, width, height);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.pingTex);
+        gl.uniform1i(this.uniformLocations.u_image, 0);
+        gl.uniform2f(this.uniformLocations.u_texelDir, 0, 1 / height);
+        gl.uniform1fv(this.uniformLocations.u_weights, weights);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      } else {
+        this.runPass(this.pingTex, this.pongFbo, weights, 0, 1, width, height);
+        srcTex = this.pongTex;
+      }
     }
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.pongFbo);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, this.pixelBuffer);
+    // Make sure GL has actually executed before the 2D side reads the buffer.
+    gl.flush();
   } finally {
     this.restoreState(saved);
   }
 
-  var rowBytes = width * 4;
-  var imageData = sourceCtx.createImageData(width, height);
-  var dst = imageData.data;
-  var src = this.pixelBuffer;
-  // WebGL reads bottom-up; ImageData is top-down.
-  for (var y = 0; y < height; y += 1) {
-    var srcOffset = (height - 1 - y) * rowBytes;
-    var dstOffset = y * rowBytes;
-    for (var x = 0; x < rowBytes; x += 1) {
-      dst[dstOffset + x] = src[srcOffset + x];
-    }
-  }
+  // ctx.drawImage handles the Y-flip from WebGL's bottom-up convention.
   var prevTransform = sourceCtx.getTransform();
+  var prevComposite = sourceCtx.globalCompositeOperation;
+  var prevAlpha = sourceCtx.globalAlpha;
+  var prevFilter = sourceCtx.filter;
   sourceCtx.setTransform(1, 0, 0, 1, 0, 0);
-  sourceCtx.clearRect(0, 0, width, height);
-  sourceCtx.putImageData(imageData, 0, 0);
+  sourceCtx.globalCompositeOperation = 'copy';
+  sourceCtx.globalAlpha = 1;
+  sourceCtx.filter = 'none';
+  sourceCtx.drawImage(glCanvas, 0, 0, width, height);
+  sourceCtx.filter = prevFilter;
+  sourceCtx.globalAlpha = prevAlpha;
+  sourceCtx.globalCompositeOperation = prevComposite;
   sourceCtx.setTransform(prevTransform);
+
+  // Restore the host canvas dimensions (this clears the drawing buffer; the
+  // host code is expected to repaint its own content on its next frame).
+  if (prevCanvasW !== width) glCanvas.width = prevCanvasW;
+  if (prevCanvasH !== height) glCanvas.height = prevCanvasH;
 };
 
 CVWebGLBlur.prototype.destroy = function () {
