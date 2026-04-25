@@ -309,6 +309,8 @@ WebGLRendererBase.prototype.renderFrame = function (num, forceRender) {
         this.elements[i].renderFrame();
       }
     }
+    // All layers have rendered into the root FBO; present it to the canvas.
+    this.canvasContext.endFrame();
   }
   this.renderConfig.bufferManager.releaseAll();
 };

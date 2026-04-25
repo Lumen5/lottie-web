@@ -26,7 +26,9 @@ WGLBaseElement.prototype = {
     var globalData = this.globalData;
     if (globalData.blendMode !== this.data.bm) {
       globalData.blendMode = this.data.bm;
-      // Recorded for parity with CV — effective blend modes need shader work.
+      // Tracked for diagnostics; the actual compositing happens at endLayer
+      // time via a shader pass.  The CSS-style enum is also assigned here so
+      // any state-tracking that mirrors CanvasRenderingContext2D stays in sync.
       var blendModeValue = getBlendMode(this.data.bm);
       globalData.canvasContext.globalCompositeOperation = blendModeValue;
     }
@@ -61,11 +63,35 @@ WGLBaseElement.prototype = {
     this.renderLocalTransform();
     this.setBlendMode();
     var forceRealStack = this.data.ty === 0;
-    this.globalData.renderer.save(forceRealStack);
-    this.globalData.renderer.ctxTransform(this.finalTransform.localMat.props);
-    this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
+    var blendMode = +(this.data.bm) || 0;
+    // Lottie blend modes 1..11 (multiply, screen, overlay, darken, lighten,
+    // color-dodge, color-burn, hard-light, soft-light, difference, exclusion)
+    // are implemented via a shader composite that needs the layer rendered to
+    // its own FBO first.  Mode 0 (normal) and modes ≥ 12 fall through to the
+    // direct-draw path.
+    var needsIsolation = blendMode >= 1 && blendMode <= 11;
+    var renderer = this.globalData.renderer;
+    var ctx = this.globalData.canvasContext;
+
+    if (needsIsolation) {
+      ctx.beginLayer();
+    }
+
+    renderer.save(forceRealStack);
+    renderer.ctxTransform(this.finalTransform.localMat.props);
+    if (!needsIsolation) {
+      renderer.ctxOpacity(this.finalTransform.localOpacity);
+    }
     this.renderInnerContent();
-    this.globalData.renderer.restore(forceRealStack);
+    renderer.restore(forceRealStack);
+
+    if (needsIsolation) {
+      ctx.endLayer({
+        blendMode: blendMode,
+        opacity: this.finalTransform.localOpacity,
+      });
+    }
+
     if (this.maskManager.hasMasks) {
       this.globalData.renderer.restore(true);
     }
