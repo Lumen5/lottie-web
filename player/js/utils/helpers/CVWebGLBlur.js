@@ -212,16 +212,22 @@ CVWebGLBlur.prototype.runPass = function (srcTex, dstFbo, weights, dirX, dirY, w
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 };
 
+// Aim for an effective per-pass sigma in this range. A scale factor is
+// chosen so the kernel is well utilized without needing several passes.
+var TARGET_SIGMA = 2.5;
+// Hard cap on the downsample factor; larger values blow out near edges.
+var MAX_DOWNSAMPLE = 8;
+
 // Apply Gaussian blur of `sigma` (in canvas pixels) to `sourceCanvas`.
 // On return the same canvas holds the blurred pixels. Drawing transform
 // and composite state of the supplied 2d context are preserved.
 //
-// The final pass renders into the host's WebGL canvas drawing buffer,
-// which is then transferred back via `ctx.drawImage(glCanvas, ...)`.
-// This avoids the slow `gl.readPixels` + `putImageData` round-trip and
-// the GPU stalls it triggers. The host's drawing buffer is treated as
-// scratch space, matching the contract that lottie-web is borrowing the
-// context temporarily.
+// To keep the GPU↔CPU transfer cheap, the blur runs at a downsampled
+// resolution and the final pass renders into the host's WebGL canvas,
+// which is then transferred back via `ctx.drawImage(glCanvas, ...)` and
+// rescaled to the source canvas size. The host's drawing buffer is
+// treated as scratch space, matching the contract that lottie-web
+// borrows the WebGL context only temporarily.
 CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
   if (!sigma || sigma <= 0) return;
   var width = sourceCanvas.width;
@@ -234,15 +240,25 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
   var gl = this.gl;
   if (gl.isContextLost && gl.isContextLost()) return;
 
+  // Downsample so each pass works on far fewer pixels (the readback
+  // implicit in `drawImage(glCanvas, ...)` is the dominant cost on
+  // software rasterizers). Choose the largest scale that keeps the
+  // per-pass sigma close to TARGET_SIGMA, so a single pair of passes
+  // covers the blur without losing visible detail.
+  var scale = Math.max(1, Math.min(MAX_DOWNSAMPLE, Math.round(sigma / TARGET_SIGMA)));
+  var dsWidth = Math.max(1, Math.ceil(width / scale));
+  var dsHeight = Math.max(1, Math.ceil(height / scale));
+  var dsSigma = sigma / scale;
+
   var glCanvas = gl.canvas;
   var prevCanvasW = glCanvas.width;
   var prevCanvasH = glCanvas.height;
-  if (prevCanvasW !== width) glCanvas.width = width;
-  if (prevCanvasH !== height) glCanvas.height = height;
+  if (prevCanvasW !== dsWidth) glCanvas.width = dsWidth;
+  if (prevCanvasH !== dsHeight) glCanvas.height = dsHeight;
 
   var saved = this.saveState();
   try {
-    this.ensureFbos(width, height);
+    this.ensureFbos(dsWidth, dsHeight);
 
     gl.disable(gl.BLEND);
     gl.disable(gl.DEPTH_TEST);
@@ -261,8 +277,7 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
     gl.bindTexture(gl.TEXTURE_2D, this.uploadTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
 
-    // Large sigmas need multiple passes; the kernel only spans ±KERNEL_RADIUS texels.
-    var passSigma = sigma;
+    var passSigma = dsSigma;
     var passes = 1;
     if (passSigma > MAX_SIGMA_PER_PASS) {
       passes = Math.ceil((passSigma * passSigma) / (MAX_SIGMA_PER_PASS * MAX_SIGMA_PER_PASS));
@@ -272,21 +287,21 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
 
     var srcTex = this.uploadTex;
     for (var p = 0; p < passes; p += 1) {
-      this.runPass(srcTex, this.pingFbo, weights, 1, 0, width, height);
+      this.runPass(srcTex, this.pingFbo, weights, 1, 0, dsWidth, dsHeight);
       var isLastPass = p === passes - 1;
       if (isLastPass) {
         // The final vertical pass writes directly to the WebGL canvas's
         // default framebuffer, so the result is available to drawImage.
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, width, height);
+        gl.viewport(0, 0, dsWidth, dsHeight);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.pingTex);
         gl.uniform1i(this.uniformLocations.u_image, 0);
-        gl.uniform2f(this.uniformLocations.u_texelDir, 0, 1 / height);
+        gl.uniform2f(this.uniformLocations.u_texelDir, 0, 1 / dsHeight);
         gl.uniform1fv(this.uniformLocations.u_weights, weights);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       } else {
-        this.runPass(this.pingTex, this.pongFbo, weights, 0, 1, width, height);
+        this.runPass(this.pingTex, this.pongFbo, weights, 0, 1, dsWidth, dsHeight);
         srcTex = this.pongTex;
       }
     }
@@ -296,16 +311,21 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
     this.restoreState(saved);
   }
 
-  // ctx.drawImage handles the Y-flip from WebGL's bottom-up convention.
+  // ctx.drawImage handles the Y-flip and the upscale back to source size.
+  // Browsers use bilinear filtering on canvas drawImage by default, which
+  // is fine for a Gaussian-blurred source.
   var prevTransform = sourceCtx.getTransform();
   var prevComposite = sourceCtx.globalCompositeOperation;
   var prevAlpha = sourceCtx.globalAlpha;
   var prevFilter = sourceCtx.filter;
+  var prevSmoothing = sourceCtx.imageSmoothingEnabled;
   sourceCtx.setTransform(1, 0, 0, 1, 0, 0);
   sourceCtx.globalCompositeOperation = 'copy';
   sourceCtx.globalAlpha = 1;
   sourceCtx.filter = 'none';
-  sourceCtx.drawImage(glCanvas, 0, 0, width, height);
+  sourceCtx.imageSmoothingEnabled = true;
+  sourceCtx.drawImage(glCanvas, 0, 0, dsWidth, dsHeight, 0, 0, width, height);
+  sourceCtx.imageSmoothingEnabled = prevSmoothing;
   sourceCtx.filter = prevFilter;
   sourceCtx.globalAlpha = prevAlpha;
   sourceCtx.globalCompositeOperation = prevComposite;
@@ -313,8 +333,8 @@ CVWebGLBlur.prototype.blur = function (sourceCanvas, sourceCtx, sigma) {
 
   // Restore the host canvas dimensions (this clears the drawing buffer; the
   // host code is expected to repaint its own content on its next frame).
-  if (prevCanvasW !== width) glCanvas.width = prevCanvasW;
-  if (prevCanvasH !== height) glCanvas.height = prevCanvasH;
+  if (prevCanvasW !== dsWidth) glCanvas.width = prevCanvasW;
+  if (prevCanvasH !== dsHeight) glCanvas.height = prevCanvasH;
 };
 
 CVWebGLBlur.prototype.destroy = function () {

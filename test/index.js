@@ -197,7 +197,7 @@ const getBrowser = async () => puppeteer.launch({
   // frame and waiting for it to finish rendering) can exceed puppeteer's
   // default 30s protocol timeout. Bumping it gives those evaluates room to
   // complete without making non-WebGL tests any slower.
-  protocolTimeout: 120000,
+  protocolTimeout: 600000,
   args: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
