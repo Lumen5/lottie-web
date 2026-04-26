@@ -11,6 +11,7 @@ import CVShapeElement from '../elements/canvasElements/CVShapeElement';
 import CVTextElement from '../elements/canvasElements/CVTextElement';
 import CVImageElement from '../elements/canvasElements/CVImageElement';
 import CVSolidElement from '../elements/canvasElements/CVSolidElement';
+import CVWebGLBlur from '../utils/helpers/CVWebGLBlur';
 
 function CanvasRendererBase() {
 }
@@ -144,6 +145,9 @@ CanvasRendererBase.prototype.configAnimation = function (animData) {
   this.globalData.isDashed = false;
   this.globalData.progressiveLoad = this.renderConfig.progressiveLoad;
   this.globalData.transformCanvas = this.transformCanvas;
+  this.globalData.webglContext = this.renderConfig.webglContext || null;
+  this.globalData.forceWebGLBlur = !!this.renderConfig.forceWebGLBlur;
+  this.globalData.getWebGLBlur = this.getWebGLBlur.bind(this);
   this.elements = createSizedArray(animData.layers.length);
 
   this.updateContainerSize();
@@ -229,6 +233,15 @@ CanvasRendererBase.prototype.updateContainerSize = function (width, height) {
   this.renderFrame(this.renderedFrame, true);
 };
 
+CanvasRendererBase.prototype.getWebGLBlur = function () {
+  var gl = this.renderConfig.webglContext;
+  if (!gl) return null;
+  if (!this.webglBlur) {
+    this.webglBlur = new CVWebGLBlur(gl);
+  }
+  return this.webglBlur;
+};
+
 CanvasRendererBase.prototype.destroy = function () {
   if (this.renderConfig.clearCanvas && this.animationItem.wrapper) {
     this.animationItem.wrapper.innerText = '';
@@ -242,6 +255,10 @@ CanvasRendererBase.prototype.destroy = function () {
   }
   this.elements.length = 0;
   this.globalData.canvasContext = null;
+  if (this.webglBlur) {
+    this.webglBlur.destroy();
+    this.webglBlur = null;
+  }
   this.animationItem.container = null;
   this.destroyed = true;
 };

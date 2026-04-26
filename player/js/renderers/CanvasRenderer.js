@@ -12,6 +12,14 @@ function CanvasRenderer(animationItem, config) {
   this.renderConfig = {
     clearCanvas: (config && config.clearCanvas !== undefined) ? config.clearCanvas : true,
     context: (config && config.context) || null,
+    // Optional WebGL rendering context borrowed from the host application.
+    // Used by the canvas renderer to apply Gaussian blur on browsers that
+    // don't support `ctx.filter` for blur (notably Safari). Lottie restores
+    // any GL state it touches before returning.
+    webglContext: (config && config.webglContext) || null,
+    // Test/debug switch that forces the WebGL blur path even on browsers
+    // that support `ctx.filter` for blur. Requires `webglContext`.
+    forceWebGLBlur: !!(config && config.forceWebGLBlur),
     progressiveLoad: (config && config.progressiveLoad) || false,
     preserveAspectRatio: (config && config.preserveAspectRatio) || 'xMidYMid meet',
     imagePreserveAspectRatio: (config && config.imagePreserveAspectRatio) || 'xMidYMid slice',

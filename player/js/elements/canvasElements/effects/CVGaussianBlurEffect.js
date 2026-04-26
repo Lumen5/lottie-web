@@ -2,6 +2,7 @@ function CVGaussianBlurEffect(effectElements, elem) {
   this.filterManager = effectElements;
   this.globalData = elem.globalData;
   this.filterString = '';
+  this.sigma = 0;
 }
 
 CVGaussianBlurEffect.prototype.renderFrame = function () {
@@ -23,6 +24,7 @@ CVGaussianBlurEffect.prototype.renderFrame = function () {
   var sigmaY = (dimensions == 2) ? 0 : sigma; // eslint-disable-line eqeqeq
   var maxSigma = Math.max(sigmaX, sigmaY);
 
+  this.sigma = maxSigma;
   this.filterString = maxSigma > 0 ? 'blur(' + maxSigma + 'px)' : '';
 };
 
