@@ -67,8 +67,21 @@ CVBaseElement.prototype = {
       this.transformCanvas.h * this.transformCanvas.sy
     );
   },
-  prepareLayer: function () {
+  isIsolated: function () {
+    // The layer needs to render to an offscreen buffer (isolated group) when
+    // it has a track matte, or when a shape/text layer with opacity below 1
+    // contains overlapping fills/strokes that would otherwise alpha-blend
+    // with each other and produce darker intersections (mismatching SVG's
+    // group-opacity semantics). Compositions, images, solids and other layer
+    // types are left alone to preserve their existing rendering behavior.
     if (this.data.tt >= 1) {
+      return true;
+    }
+    var ty = this.data.ty;
+    return (ty === 4 || ty === 5) && this.finalTransform.localOpacity < 1;
+  },
+  prepareLayer: function () {
+    if (this.isIsolated()) {
       this.globalDrawingBufferCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
       var globalDrawingBufferCanvasCtx = this.globalDrawingBufferCanvas.getContext('2d');
       this.clearCanvas(globalDrawingBufferCanvasCtx);
@@ -83,7 +96,7 @@ CVBaseElement.prototype = {
     }
   },
   exitLayer: function () {
-    if (this.data.tt >= 1) {
+    if (this.isIsolated()) {
       var contentOfCurrentLayerCanvas = this.globalData.renderConfig.bufferManager.allocate(this.canvasContext.canvas.width, this.canvasContext.canvas.height);
       // On the second buffer we store the current state of the global drawing
       // that only contains the content of this layer
@@ -95,25 +108,29 @@ CVBaseElement.prototype = {
       this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
       this.clearCanvas(this.canvasContext);
       this.canvasContext.setTransform(this.currentTransform);
-      // We draw the mask
-      const mask = this.comp.getElementById('tp' in this.data ? this.data.tp : this.data.ind - 1);
-      mask.renderFrame(true);
-      // We draw the second buffer (that contains the content of this layer)
-      this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
+      if (this.data.tt >= 1) {
+        // We draw the mask
+        const mask = this.comp.getElementById('tp' in this.data ? this.data.tp : this.data.ind - 1);
+        mask.renderFrame(true);
+        // We draw the second buffer (that contains the content of this layer)
+        this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
 
-      // If the mask is a Luma matte, we need to do two extra painting operations
-      // the _isProxy check is to avoid drawing a fake canvas in workers that will throw an error
-      if (this.data.tt >= 3 && !document._isProxy) {
-        // We copy the painted mask to a buffer that has a color matrix filter applied to it
-        // that applies the rgb values to the alpha channel
-        var lumaBuffer = assetManager.getLumaCanvas(this.canvasContext.canvas);
-        var lumaBufferCtx = lumaBuffer.getContext('2d');
-        lumaBufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
-        this.clearCanvas(this.canvasContext);
-        // we repaint the context with the mask applied to it
-        this.canvasContext.drawImage(lumaBuffer, 0, 0);
+        // If the mask is a Luma matte, we need to do two extra painting operations
+        // the _isProxy check is to avoid drawing a fake canvas in workers that will throw an error
+        if (this.data.tt >= 3 && !document._isProxy) {
+          // We copy the painted mask to a buffer that has a color matrix filter applied to it
+          // that applies the rgb values to the alpha channel
+          var lumaBuffer = assetManager.getLumaCanvas(this.canvasContext.canvas);
+          var lumaBufferCtx = lumaBuffer.getContext('2d');
+          lumaBufferCtx.drawImage(this.canvasContext.canvas, 0, 0);
+          this.clearCanvas(this.canvasContext);
+          // we repaint the context with the mask applied to it
+          this.canvasContext.drawImage(lumaBuffer, 0, 0);
+        }
+        this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
+      } else {
+        this.canvasContext.setTransform(1, 0, 0, 1, 0, 0);
       }
-      this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
       // The layer opacity is applied here (not during child rendering) so that
       // overlapping shapes within the layer are treated as an isolated group,
       // matching SVG's group-opacity semantics.
@@ -148,7 +165,7 @@ CVBaseElement.prototype = {
     this.prepareLayer();
     this.globalData.renderer.save(forceRealStack);
     this.globalData.renderer.ctxTransform(this.finalTransform.localMat.props);
-    if (!(this.data.tt >= 1)) {
+    if (!this.isIsolated()) {
       this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
     }
     this.renderInnerContent();
