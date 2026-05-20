@@ -42,6 +42,18 @@
 
         return defaultValues;
     };
+
+    // Comma-separated list of frame numbers, e.g. "10,30,60". When provided,
+    // the test page seeks only those frames instead of iterating every frame.
+    const parseTimestamps = (raw) => {
+        if (!raw) return null;
+        const values = raw.split(',')
+            .map((v) => Number(v.trim()))
+            .filter((v) => !Number.isNaN(v));
+        return values.length ? values : null;
+    };
+
+    const isTruthyParam = (raw) => raw === '1' || raw === 'true';
 </script>
 <script>
     const submitAndWaitForResponse = (currentFrame, isLast) => (
@@ -65,28 +77,55 @@
 
     window.startProcess = () => {
         const url = new URL(window.location);
-        const settings = buildRenderSettings(url.searchParams)
+        const settings = buildRenderSettings(url.searchParams);
+        const timestamps = parseTimestamps(url.searchParams.get('timestamps'));
+        const forceWebGLBlur = isTruthyParam(url.searchParams.get('forceWebGLBlur'));
+
+        const rendererSettings = {};
+        if (forceWebGLBlur) {
+            // Provide a real WebGL context the canvas renderer can borrow for
+            // its blur fallback path. A separate offscreen canvas is used so
+            // it doesn't interfere with lottie's own 2D drawing target.
+            const glCanvas = document.createElement('canvas');
+            const gl = glCanvas.getContext('webgl', { premultipliedAlpha: false })
+                || glCanvas.getContext('experimental-webgl', { premultipliedAlpha: false });
+            rendererSettings.webglContext = gl;
+            rendererSettings.forceWebGLBlur = true;
+        }
+
         const animation = lottie.loadAnimation({
             container: document.getElementById('lottie'),
             path: settings.path,
             autoplay: false,
             loop: false,
             renderer: settings.renderer,
+            rendererSettings,
         })
         animation.addEventListener('DOMLoaded', async () => {
             window.onAnimationLoaded();
             try {
-                let totalFrames = animation.totalFrames;
-                let currentFrame = 0;
-                while (currentFrame <= totalFrames) {
-                    await waitContinueCommand();
-                    animation.goToAndStop(currentFrame, true);
-                    await submitAndWaitForResponse(
-                        currentFrame,
-                        currentFrame === totalFrames,
-                    );
-                    currentFrame += 1;
-
+                const totalFrames = animation.totalFrames;
+                if (timestamps && timestamps.length) {
+                    for (let i = 0; i < timestamps.length; i += 1) {
+                        const frame = timestamps[i];
+                        await waitContinueCommand();
+                        animation.goToAndStop(frame, true);
+                        await submitAndWaitForResponse(
+                            frame,
+                            i === timestamps.length - 1,
+                        );
+                    }
+                } else {
+                    let currentFrame = 0;
+                    while (currentFrame <= totalFrames) {
+                        await waitContinueCommand();
+                        animation.goToAndStop(currentFrame, true);
+                        await submitAndWaitForResponse(
+                            currentFrame,
+                            currentFrame === totalFrames,
+                        );
+                        currentFrame += 1;
+                    }
                 }
             } catch (error) {
                 console.log('ERROR', error.message);

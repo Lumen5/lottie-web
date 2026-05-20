@@ -151,7 +151,13 @@ CVBaseElement.prototype = {
     if (!(this.data.tt >= 1)) {
       this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
     }
+    if (this.renderableEffectsManager && this.renderableEffectsManager.preInnerRender) {
+      this.renderableEffectsManager.preInnerRender();
+    }
     this.renderInnerContent();
+    if (this.renderableEffectsManager && this.renderableEffectsManager.postInnerRender) {
+      this.renderableEffectsManager.postInnerRender();
+    }
     this.globalData.renderer.restore(forceRealStack);
     this.exitLayer();
     if (this.maskManager.hasMasks) {
