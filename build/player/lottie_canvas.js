@@ -4436,7 +4436,7 @@
   lottie.useWebWorker = setWebWorker;
   lottie.setIDPrefix = setPrefix;
   lottie.__getFactory = getFactory;
-  lottie.version = '5.14.0';
+  lottie.version = '5.15.0';
   function checkReady() {
     if (document.readyState === 'complete') {
       clearInterval(readyStateCheckInterval);
@@ -11196,7 +11196,13 @@
           this.canvasContext.drawImage(lumaBuffer, 0, 0);
         }
         this.canvasContext.globalCompositeOperation = operationsMap[this.data.tt];
+        // The layer opacity is applied here (not during child rendering) so that
+        // overlapping shapes within the layer are treated as an isolated group,
+        // matching SVG's group-opacity semantics.
+        var prevAlpha = this.canvasContext.globalAlpha;
+        this.canvasContext.globalAlpha = prevAlpha * this.finalTransform.localOpacity;
         this.canvasContext.drawImage(contentOfCurrentLayerCanvas, 0, 0);
+        this.canvasContext.globalAlpha = prevAlpha;
         // We finally draw the first buffer (that contains the content of the global drawing)
         // We use destination-over to draw the global drawing below the current layer
         this.canvasContext.globalCompositeOperation = 'destination-over';
@@ -11223,7 +11229,9 @@
       this.prepareLayer();
       this.globalData.renderer.save(forceRealStack);
       this.globalData.renderer.ctxTransform(this.finalTransform.localMat.props);
-      this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
+      if (!(this.data.tt >= 1)) {
+        this.globalData.renderer.ctxOpacity(this.finalTransform.localOpacity);
+      }
       this.renderInnerContent();
       this.globalData.renderer.restore(forceRealStack);
       this.exitLayer();
@@ -12547,34 +12555,21 @@
   var checkedOut = new Set();
   var maxWidth = 0;
   var maxHeight = 0;
-  function reallocate() {
-    for (var i = 0; i < pool.length; i += 1) {
-      var canvas = pool[i];
-      if (canvas.width < maxWidth) {
-        canvas.width = maxWidth;
-      }
-      if (canvas.height < maxHeight) {
-        canvas.height = maxHeight;
-      }
-    }
-  }
-  function reallocateIfNeeded(width, height) {
-    var needsReallocation = false;
+  function reallocateIfNeeded(width, height, canvas) {
     if (maxWidth < width) {
       maxWidth = width;
-      needsReallocation = true;
     }
     if (maxHeight < height) {
       maxHeight = height;
-      needsReallocation = true;
     }
-    if (needsReallocation) {
-      reallocate();
+    if (canvas.width < maxWidth || canvas.height < maxHeight) {
+      canvas.width = maxWidth;
+      canvas.height = maxHeight;
     }
   }
   function allocate(width, height) {
-    reallocateIfNeeded(width, height);
     var canvas = pool.length ? pool.pop() : assetLoader.createCanvas(width, height);
+    reallocateIfNeeded(width, height, canvas);
     checkedOut.add(canvas);
     return canvas;
   }

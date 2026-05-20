@@ -76,17 +76,27 @@
         animation.addEventListener('DOMLoaded', async () => {
             window.onAnimationLoaded();
             try {
-                let totalFrames = animation.totalFrames;
-                let currentFrame = 0;
-                while (currentFrame <= totalFrames) {
+                // If the test config provides an explicit list of frames,
+                // only screenshot those frames instead of every frame in the
+                // animation.  Frames are passed as a comma-separated query
+                // param (e.g. ?frames=0,30,60).
+                const explicitFrames = (settings.frames || '')
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter((s) => s.length)
+                    .map((s) => Number(s))
+                    .filter((n) => Number.isFinite(n));
+                const totalFrames = animation.totalFrames;
+                const framesToRender = explicitFrames.length
+                    ? explicitFrames
+                    : Array.from({ length: totalFrames + 1 }, (_, i) => i);
+
+                for (let i = 0; i < framesToRender.length; i += 1) {
+                    const currentFrame = framesToRender[i];
+                    const isLast = i === framesToRender.length - 1;
                     await waitContinueCommand();
                     animation.goToAndStop(currentFrame, true);
-                    await submitAndWaitForResponse(
-                        currentFrame,
-                        currentFrame === totalFrames,
-                    );
-                    currentFrame += 1;
-
+                    await submitAndWaitForResponse(currentFrame, isLast);
                 }
             } catch (error) {
                 console.log('ERROR', error.message);
