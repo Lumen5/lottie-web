@@ -380,14 +380,14 @@ const ExpressionManager = (function () {
   }
 
   var sharedScope = {
-    Math: BMMath,
-    Array: Array,
-    Number: Number,
-    String: String,
-    Boolean: Boolean,
-    Date: Date,
-    JSON: JSON,
-    RegExp: RegExp,
+    Math: ExpressionSandbox.readOnly(BMMath),
+    Array: ExpressionSandbox.readOnly(Array),
+    Number: ExpressionSandbox.readOnly(Number),
+    String: ExpressionSandbox.readOnly(String),
+    Boolean: ExpressionSandbox.readOnly(Boolean),
+    Date: ExpressionSandbox.readOnly(Date),
+    JSON: ExpressionSandbox.readOnly(JSON),
+    RegExp: ExpressionSandbox.readOnly(RegExp),
     parseInt: parseInt,
     parseFloat: parseFloat,
     isNaN: isNaN,

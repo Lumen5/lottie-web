@@ -174,6 +174,40 @@ const ExpressionSandbox = (function () {
     return name;
   }
 
+  var readOnlyHandler = {
+    get: function (target, key) {
+      if (typeof key === 'string' && isDeniedProperty(key)) {
+        throw new Error('Expression is not allowed to access "' + key + '"');
+      }
+      return target[key];
+    },
+    construct: function (target, args) {
+      return Reflect.construct(target, args);
+    },
+    set: function () {
+      return false;
+    },
+    defineProperty: function () {
+      return false;
+    },
+    deleteProperty: function () {
+      return false;
+    },
+    setPrototypeOf: function () {
+      return false;
+    },
+    preventExtensions: function () {
+      return false;
+    },
+  };
+
+  function readOnly(target) {
+    if (typeof Proxy !== 'function' || typeof Reflect === 'undefined') {
+      return target;
+    }
+    return new Proxy(target, readOnlyHandler);
+  }
+
   function analyze(source) {
     var output = '';
     var usedNames = {};
@@ -566,6 +600,7 @@ const ExpressionSandbox = (function () {
 
   return {
     compileExpression: compileExpression,
+    readOnly: readOnly,
   };
 }());
 

@@ -34,11 +34,11 @@ const SCOPE_NAMES = [
 function createScope() {
   const scope = {};
   SCOPE_NAMES.forEach((name) => { scope[name] = undefined; });
-  scope.Math = Math;
-  scope.Array = Array;
-  scope.Number = Number;
-  scope.String = String;
-  scope.JSON = JSON;
+  scope.Math = ExpressionSandbox.readOnly(Math);
+  scope.Array = ExpressionSandbox.readOnly(Array);
+  scope.Number = ExpressionSandbox.readOnly(Number);
+  scope.String = ExpressionSandbox.readOnly(String);
+  scope.JSON = ExpressionSandbox.readOnly(JSON);
   scope.parseInt = parseInt;
   scope.parseFloat = parseFloat;
   scope.time = 2;
@@ -72,6 +72,8 @@ const allowed = [
   ['posterize time', 'var $bm_rt;\nposterizeTime(1);\n$bm_rt = 5;', 5],
   ['comments are inert', 'var $bm_rt;\n// [].constructor\n/* .constructor */\n$bm_rt = 5;', 5],
   ['animation api', 'var $bm_rt;\n$bm_rt = thisLayer.index + 2;', 5],
+  ['read only intrinsics stay usable', 'var $bm_rt;\n$bm_rt = Math.floor(Math.PI) + Number("1") + new Array(1).length;', 5],
+  ['constructing through intrinsics', "var $bm_rt;\n$bm_rt = JSON.parse('[1,4]')[0] + new Array(4).length;", 5],
 ];
 
 const blocked = [
@@ -101,6 +103,16 @@ const blocked = [
   ['sandbox internals', 'var $bm_rt;\n$bm_rt = $sbx_scope;'],
   ['non ascii identifiers', 'var $bm_rt;\nvar ω = [];\n$bm_rt = ω["constructor"];'],
   ['mislexed division', 'var $bm_rt;\n$bm_rt = 1 / [].constructor / 1;'],
+  ['arrow function constructor', "var $bm_rt;\nvar F = (() => {}).constructor;\n$bm_rt = new F('return this')();"],
+  ['async function constructor', "var $bm_rt;\nvar F = (async function () {})['constructor'];\n$bm_rt = new F('return this')();"],
+  ['generator function constructor', "var $bm_rt;\nvar F = (function* () {})['constructor'];\n$bm_rt = new F('return this')();"],
+  ['async generator constructor', "var $bm_rt;\nvar F = (async function* () {})['constructor'];\n$bm_rt = new F('return this')();"],
+  ['constructor of a passed animation object', "var $bm_rt;\n$bm_rt = thisLayer['constructor']('return this')();"],
+  ['implicit global through sloppy this', 'var $bm_rt;\nfunction getGlobal() { return this; }\n$bm_rt = getGlobal();'],
+  ['writing to a shared intrinsic', 'var $bm_rt;\nArray.isArray = function () { return true; };\n$bm_rt = 1;'],
+  ['writing to Math', 'var $bm_rt;\nMath.floor = function () { return 0; };\n$bm_rt = 1;'],
+  ['deleting from a shared intrinsic', 'var $bm_rt;\ndelete Math.floor;\n$bm_rt = 1;'],
+  ['replacing an intrinsic prototype', 'var $bm_rt;\nMath.__proto__ = null;\n$bm_rt = 1;'],
 ];
 
 function collectExpressions(directory) {
@@ -161,6 +173,11 @@ blocked.forEach((testCase) => {
     }
     assert.ok(result === undefined || result === null, 'expression returned ' + String(result));
   });
+});
+
+check('shared intrinsics stay intact after the attacks', () => {
+  assert.strictEqual(Array.isArray([]), true);
+  assert.strictEqual(Math.floor(1.7), 1);
 });
 
 collectExpressions(path.join(__dirname, 'animations')).forEach((expression) => {
