@@ -18,6 +18,7 @@
     "lint:fix": "npx eslint ./player/js/**/* --fix",
     "test:create": "node test/index.js",
     "test:sandbox": "node test/expressionSandbox.js",
+    "test:sandbox-browser": "node test/expressionSandboxBrowser.js",
     "test:compare": "node test/index.js -s compare",
     "serve": "npx serve -p 3000",
     "dev": "npm run build && npx serve -p 3000"

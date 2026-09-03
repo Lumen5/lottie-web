@@ -1,3 +1,5 @@
+import ExpressionRealm from './ExpressionRealm';
+
 const ExpressionSandbox = (function () {
   'use strict';
 
@@ -175,15 +177,6 @@ const ExpressionSandbox = (function () {
   }
 
   var readOnlyHandler = {
-    get: function (target, key) {
-      if (typeof key === 'string' && isDeniedProperty(key)) {
-        throw new Error('Expression is not allowed to access "' + key + '"');
-      }
-      return target[key];
-    },
-    construct: function (target, args) {
-      return Reflect.construct(target, args);
-    },
     set: function () {
       return false;
     },
@@ -202,7 +195,7 @@ const ExpressionSandbox = (function () {
   };
 
   function readOnly(target) {
-    if (typeof Proxy !== 'function' || typeof Reflect === 'undefined') {
+    if (typeof Proxy !== 'function') {
       return target;
     }
     return new Proxy(target, readOnlyHandler);
@@ -591,7 +584,7 @@ const ExpressionSandbox = (function () {
     var analysis = analyze(source);
     var prologue = buildPrologue(Object.keys(scope), analysis);
     var body = '"use strict";' + prologue + '\n' + analysis.code + '\n;return ' + RESULT_NAME + ';';
-    var compiled = new Function(SCOPE_ARG, KEY_ARG, body); // eslint-disable-line no-new-func
+    var compiled = ExpressionRealm.getCompiler()(SCOPE_ARG, KEY_ARG, body);
 
     return function runExpression(runtimeScope) {
       return compiled.call(undefined, runtimeScope, guardKey);

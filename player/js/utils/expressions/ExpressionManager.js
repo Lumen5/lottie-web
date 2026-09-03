@@ -26,7 +26,7 @@ const ExpressionManager = (function () {
   }
 
   function $bm_isInstanceOfArray(arr) {
-    return arr.constructor === Array || arr.constructor === Float32Array;
+    return Array.isArray(arr) || arr.constructor === Float32Array;
   }
 
   function isNumerable(tOfV, v) {

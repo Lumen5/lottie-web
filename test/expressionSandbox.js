@@ -3,6 +3,10 @@
  * scope, and that everything else (globals, host APIs, prototype escapes,
  * player internals) is unreachable.
  *
+ * There is no separate realm in node, so the sandbox is checked here on top of
+ * the plain Function constructor. The isolated realm is covered by
+ * test/expressionSandboxBrowser.js.
+ *
  * Run with: npm run test:sandbox
  */
 
@@ -12,6 +16,10 @@ const path = require('path');
 
 const sandboxPath = path.join(__dirname, '../player/js/utils/expressions/ExpressionSandbox.js');
 const sandboxSource = fs.readFileSync(sandboxPath, 'utf8')
+  .replace(
+    "import ExpressionRealm from './ExpressionRealm';",
+    'var ExpressionRealm = { getCompiler: function () { return Function; } };'
+  )
   .replace(/export default ExpressionSandbox;/, 'return ExpressionSandbox;');
 const ExpressionSandbox = new Function(sandboxSource)(); // eslint-disable-line no-new-func
 
