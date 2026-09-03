@@ -11,17 +11,13 @@ import BezierFactory from '../../3rd_party/BezierEaser';
 import shapePool from '../pooling/shape_pool';
 import seedrandom from '../../3rd_party/seedrandom';
 import propTypes from '../helpers/propTypes';
+import ExpressionSandbox from './ExpressionSandbox';
 
 const ExpressionManager = (function () {
   'use strict';
 
   var ob = {};
   var Math = BMMath;
-  var window = null;
-  var document = null;
-  var XMLHttpRequest = null;
-  var fetch = null;
-  var frames = null;
   var _lottieGlobal = {};
   seedrandom(BMMath);
 
@@ -383,6 +379,61 @@ const ExpressionManager = (function () {
     return path;
   }
 
+  var sharedScope = {
+    Math: BMMath,
+    Array: Array,
+    Number: Number,
+    String: String,
+    Boolean: Boolean,
+    Date: Date,
+    JSON: JSON,
+    RegExp: RegExp,
+    parseInt: parseInt,
+    parseFloat: parseFloat,
+    isNaN: isNaN,
+    isFinite: isFinite,
+    NaN: NaN,
+    Infinity: Infinity,
+    $bm_isInstanceOfArray: $bm_isInstanceOfArray,
+    $bm_neg: $bm_neg,
+    sum: sum,
+    add: add,
+    $bm_sum: $bm_sum,
+    sub: sub,
+    $bm_sub: $bm_sub,
+    mul: mul,
+    $bm_mul: $bm_mul,
+    div: div,
+    $bm_div: $bm_div,
+    mod: mod,
+    $bm_mod: $bm_mod,
+    clamp: clamp,
+    radiansToDegrees: radiansToDegrees,
+    radians_to_degrees: radians_to_degrees,
+    degreesToRadians: degreesToRadians,
+    degrees_to_radians: degrees_to_radians,
+    length: length,
+    normalize: normalize,
+    rgbToHsl: rgbToHsl,
+    hslToRgb: hslToRgb,
+    linear: linear,
+    random: random,
+    createPath: createPath,
+    _lottieGlobal: _lottieGlobal,
+  };
+
+  function createScope() {
+    var scope = {};
+    var key;
+    var keys = Object.keys(sharedScope);
+    var i;
+    for (i = 0; i < keys.length; i += 1) {
+      key = keys[i];
+      scope[key] = sharedScope[key];
+    }
+    return scope;
+  }
+
   function initiateExpression(elem, data, property) {
     // Bail out if we don't want expressions
     function noOp(_value) {
@@ -397,7 +448,6 @@ const ExpressionManager = (function () {
     var _needsRandom = val.indexOf('random') !== -1;
     var elemType = elem.data.ty;
     var transform;
-    var $bm_transform;
     var content;
     var effect;
     var thisProperty = property;
@@ -420,24 +470,10 @@ const ExpressionManager = (function () {
     var loopOut;
     var loop_out;
     var smooth;
-    var toWorld;
-    var fromWorld;
-    var fromComp;
-    var toComp;
-    var fromCompToSurface;
-    var position;
-    var rotation;
-    var anchorPoint;
-    var scale;
     var thisLayer;
-    var thisComp;
-    var mask;
     var valueAtTime;
     var velocityAtTime;
 
-    var scoped_bm_rt;
-    // val = val.replace(/(\\?"|')((http)(s)?(:\/))?\/.*?(\\?"|')/g, "\"\""); // deter potential network calls
-    var expression_function = eval('[function _expression_function(){' + val + ';scoped_bm_rt=$bm_rt}]')[0]; // eslint-disable-line no-eval
     var numKeys = property.kf ? data.k.length : 0;
 
     var active = !this.data || this.data.hd !== true;
@@ -448,7 +484,7 @@ const ExpressionManager = (function () {
       var lenWiggle = this.pv.length ? this.pv.length : 1;
       var addedAmps = createTypedArray('float32', lenWiggle);
       freq = 5;
-      var iterations = Math.floor(time * freq);
+      var iterations = Math.floor(scope.time * freq);
       iWiggle = 0;
       j = 0;
       while (iWiggle < iterations) {
@@ -460,7 +496,7 @@ const ExpressionManager = (function () {
         iWiggle += 1;
       }
       // var rnd2 = BMMath.random();
-      var periods = time * freq;
+      var periods = scope.time * freq;
       var perc = periods - Math.floor(periods);
       var arr = createTypedArray('float32', lenWiggle);
       if (lenWiggle > 1) {
@@ -624,7 +660,7 @@ const ExpressionManager = (function () {
 
     function timeToFrames(t, fps) {
       if (!t && t !== 0) {
-        t = time;
+        t = scope.time;
       }
       if (!fps) {
         fps = elem.comp.globalData.frameRate;
@@ -641,110 +677,160 @@ const ExpressionManager = (function () {
     }
 
     function substring(init, end) {
-      if (typeof value === 'string') {
+      if (typeof scope.value === 'string') {
         if (end === undefined) {
-          return value.substring(init);
+          return scope.value.substring(init);
         }
-        return value.substring(init, end);
+        return scope.value.substring(init, end);
       }
       return '';
     }
 
     function substr(init, end) {
-      if (typeof value === 'string') {
+      if (typeof scope.value === 'string') {
         if (end === undefined) {
-          return value.substr(init);
+          return scope.value.substr(init);
         }
-        return value.substr(init, end);
+        return scope.value.substr(init, end);
       }
       return '';
     }
 
-    function posterizeTime(framesPerSecond) {
-      time = framesPerSecond === 0 ? 0 : Math.floor(time * framesPerSecond) / framesPerSecond;
-      value = valueAtTime(time);
-    }
-
-    var time;
-    var velocity;
-    var value;
-    var text;
-    var textIndex;
-    var textTotal;
-    var selectorValue;
     var index = elem.data.ind;
     var hasParent = !!(elem.hierarchy && elem.hierarchy.length);
     var parent;
     var randSeed = Math.floor(Math.random() * 1000000);
-    var globalData = elem.globalData;
+    var scope = createScope();
+
+    scope.thisProperty = thisProperty;
+    scope.thisLayer = undefined;
+    scope.thisComp = undefined;
+    scope.transform = undefined;
+    scope.$bm_transform = undefined;
+    scope.content = undefined;
+    scope.effect = undefined;
+    scope.text = undefined;
+    scope.textIndex = undefined;
+    scope.textTotal = undefined;
+    scope.selectorValue = undefined;
+    scope.time = 0;
+    scope.value = undefined;
+    scope.velocity = undefined;
+    scope.index = index;
+    scope.hasParent = hasParent;
+    scope.parent = undefined;
+    scope.inPoint = inPoint;
+    scope.outPoint = outPoint;
+    scope.width = width;
+    scope.height = height;
+    scope.name = name;
+    scope.numKeys = numKeys;
+    scope.active = active;
+    scope.loopIn = loopIn;
+    scope.loop_in = loop_in;
+    scope.loopOut = loopOut;
+    scope.loop_out = loop_out;
+    scope.loopInDuration = loopInDuration;
+    scope.loopOutDuration = loopOutDuration;
+    scope.smooth = smooth;
+    scope.toWorld = undefined;
+    scope.fromWorld = undefined;
+    scope.toComp = undefined;
+    scope.fromComp = undefined;
+    scope.fromCompToSurface = undefined;
+    scope.mask = undefined;
+    scope.position = undefined;
+    scope.rotation = undefined;
+    scope.scale = undefined;
+    scope.anchorPoint = undefined;
+    scope.valueAtTime = valueAtTime;
+    scope.velocityAtTime = velocityAtTime;
+    scope.wiggle = wiggle;
+    scope.comp = comp;
+    scope.lookAt = lookAt;
+    scope.ease = ease;
+    scope.easeIn = easeIn;
+    scope.easeOut = easeOut;
+    scope.nearestKey = nearestKey;
+    scope.key = key;
+    scope.framesToTime = framesToTime;
+    scope.timeToFrames = timeToFrames;
+    scope.seedRandom = seedRandom;
+    scope.sourceRectAtTime = sourceRectAtTime;
+    scope.substring = substring;
+    scope.substr = substr;
+
+    var runExpression;
+    try {
+      runExpression = ExpressionSandbox.compileExpression(val, scope);
+    } catch (error) {
+      console.warn('Lottie: expression was rejected by the sandbox and will be ignored.', error.message); // eslint-disable-line no-console
+      return noOp;
+    }
 
     function executeExpression(_value) {
-      // globalData.pushExpression();
-      value = _value;
+      scope.value = _value;
       if (this.frameExpressionId === elem.globalData.frameId && this.propType !== 'textSelector') {
-        return value;
+        return scope.value;
       }
       if (this.propType === 'textSelector') {
-        textIndex = this.textIndex;
-        textTotal = this.textTotal;
-        selectorValue = this.selectorValue;
+        scope.textIndex = this.textIndex;
+        scope.textTotal = this.textTotal;
+        scope.selectorValue = this.selectorValue;
       }
       if (!thisLayer) {
-        text = elem.layerInterface.text;
         thisLayer = elem.layerInterface;
-        thisComp = elem.comp.compInterface;
-        toWorld = thisLayer.toWorld.bind(thisLayer);
-        fromWorld = thisLayer.fromWorld.bind(thisLayer);
-        fromComp = thisLayer.fromComp.bind(thisLayer);
-        toComp = thisLayer.toComp.bind(thisLayer);
-        mask = thisLayer.mask ? thisLayer.mask.bind(thisLayer) : null;
-        fromCompToSurface = fromComp;
+        scope.thisLayer = thisLayer;
+        scope.text = thisLayer.text;
+        scope.thisComp = elem.comp.compInterface;
+        scope.toWorld = thisLayer.toWorld.bind(thisLayer);
+        scope.fromWorld = thisLayer.fromWorld.bind(thisLayer);
+        scope.fromComp = thisLayer.fromComp.bind(thisLayer);
+        scope.toComp = thisLayer.toComp.bind(thisLayer);
+        scope.mask = thisLayer.mask ? thisLayer.mask.bind(thisLayer) : null;
+        scope.fromCompToSurface = scope.fromComp;
       }
       if (!transform) {
         transform = elem.layerInterface('ADBE Transform Group');
-        $bm_transform = transform;
+        scope.transform = transform;
+        scope.$bm_transform = transform;
         if (transform) {
-          anchorPoint = transform.anchorPoint;
-          /* position = transform.position;
-                    rotation = transform.rotation;
-                    scale = transform.scale; */
+          scope.anchorPoint = transform.anchorPoint;
         }
       }
 
       if (elemType === 4 && !content) {
         content = thisLayer('ADBE Root Vectors Group');
+        scope.content = content;
       }
       if (!effect) {
         effect = thisLayer(4);
+        scope.effect = effect;
       }
       hasParent = !!(elem.hierarchy && elem.hierarchy.length);
+      scope.hasParent = hasParent;
       if (hasParent && !parent) {
         parent = elem.hierarchy[0].layerInterface;
+        scope.parent = parent;
       }
-      time = this.comp.renderedFrame / this.comp.globalData.frameRate;
+      scope.time = this.comp.renderedFrame / this.comp.globalData.frameRate;
+      scope._lottieGlobal = _lottieGlobal;
       if (_needsRandom) {
-        seedRandom(randSeed + time);
+        seedRandom(randSeed + scope.time);
       }
       if (needsVelocity) {
-        velocity = velocityAtTime(time);
+        scope.velocity = velocityAtTime(scope.time);
       }
-      expression_function();
+      var result = runExpression(scope);
       this.frameExpressionId = elem.globalData.frameId;
 
       // TODO: Check if it's possible to return on ShapeInterface the .v value
-      // Changed this to a ternary operation because Rollup failed compiling it correctly
-      scoped_bm_rt = scoped_bm_rt.propType === propTypes.SHAPE
-        ? scoped_bm_rt.v
-        : scoped_bm_rt;
-      return scoped_bm_rt;
+      return result && result.propType === propTypes.SHAPE ? result.v : result;
     }
-    // Bundlers will see these as dead code and unless we reference them
-    executeExpression.__preventDeadCodeRemoval = [$bm_transform, anchorPoint, time, velocity, inPoint, outPoint, width, height, name, loop_in, loop_out, smooth, toComp, fromCompToSurface, toWorld, fromWorld, mask, position, rotation, scale, thisComp, numKeys, active, wiggle, loopInDuration, loopOutDuration, comp, lookAt, easeOut, easeIn, ease, nearestKey, key, text, textIndex, textTotal, selectorValue, framesToTime, timeToFrames, sourceRectAtTime, substring, substr, posterizeTime, index, globalData];
     return executeExpression;
   }
 
   ob.initiateExpression = initiateExpression;
-  ob.__preventDeadCodeRemoval = [window, document, XMLHttpRequest, fetch, frames, $bm_neg, add, $bm_sum, $bm_sub, $bm_mul, $bm_div, $bm_mod, clamp, radians_to_degrees, degreesToRadians, degrees_to_radians, normalize, rgbToHsl, hslToRgb, linear, random, createPath, _lottieGlobal];
   ob.resetFrame = resetFrame;
   return ob;
 }());
