@@ -515,6 +515,8 @@ const ExpressionSandbox = (function () {
       } else if ((ch === '+' || ch === '-') && next === ch) {
         index += 2;
         pushToken(ch + ch, 'punctuator');
+      } else if (ch === '\\') {
+        fail('escape sequences are only allowed in strings');
       } else if (ch.charCodeAt(0) > 127) {
         fail('non-ascii identifiers are not allowed');
       } else {

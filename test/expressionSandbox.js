@@ -121,6 +121,9 @@ const blocked = [
   ['writing to Math', 'var $bm_rt;\nMath.floor = function () { return 0; };\n$bm_rt = 1;'],
   ['deleting from a shared intrinsic', 'var $bm_rt;\ndelete Math.floor;\n$bm_rt = 1;'],
   ['replacing an intrinsic prototype', 'var $bm_rt;\nMath.__proto__ = null;\n$bm_rt = 1;'],
+  ['unicode escaped constructor in dot access', 'var $bm_rt;\nvar F = Array.co\\u006Estructor;\n$bm_rt = new F("return this")();'],
+  ['unicode escaped identifier', 'var $bm_rt;\n$bm_rt = \\u0041rray;'],
+  ['unicode escaped proto', 'var $bm_rt;\n$bm_rt = [].__pro\\u0074o__;'],
 ];
 
 function collectExpressions(directory) {
