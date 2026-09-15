@@ -10,3 +10,7 @@ signer.bat
 commands.txt
 debug.txt
 screenshots/compare/
+
+# rollup output; rebuilt by the prepare script before pack/publish.
+# build/extension and build/old_parser are NOT generated and stay tracked.
+build/player/
