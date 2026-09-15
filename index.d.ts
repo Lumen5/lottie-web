@@ -96,9 +96,26 @@ export type AnimationItem = {
     removeEventListener<T extends AnimationEventName>(name: T, callback?: AnimationEventCallback<AnimationEvents[T]>): void;
 }
 
+export type CompiledExpression = {
+    evaluate(bindings: Record<string, unknown>): unknown;
+};
+
+/**
+ * Evaluates expressions in place of the built-in `eval`. Receives no reference to any
+ * object in the player: bindings cross as copied values, and an expression that cannot be
+ * compiled or evaluated is dropped so the property keeps its baked keyframes.
+ */
+export type ExpressionSandbox = {
+    compile(source: string): CompiledExpression;
+    onExpressionDropped(source: string, error: unknown): void;
+};
+
 export type BaseRendererConfig = {
     imagePreserveAspectRatio?: string;
     className?: string;
+    /** Set false to ignore expressions entirely and use the baked keyframes. */
+    runExpressions?: boolean;
+    expressionSandbox?: ExpressionSandbox | null;
 };
 
 export type SVGRendererConfig = BaseRendererConfig & {

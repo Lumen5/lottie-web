@@ -436,8 +436,56 @@ const ExpressionManager = (function () {
     var velocityAtTime;
 
     var scoped_bm_rt;
-    // val = val.replace(/(\\?"|')((http)(s)?(:\/))?\/.*?(\\?"|')/g, "\"\""); // deter potential network calls
-    var expression_function = eval('[function _expression_function(){' + val + ';scoped_bm_rt=$bm_rt}]')[0]; // eslint-disable-line no-eval
+
+    // The host may supply a sandbox that evaluates expressions in an isolated interpreter
+    // instead of eval. It is handed no reference to any object in this realm: the bindings
+    // below are read at call time and cross as copied values, and `resolveEffect` answers
+    // lookups by name rather than exposing the property graph itself.
+    var expressionSandbox = elem.globalData.renderConfig.expressionSandbox;
+
+    function sandboxBindings() {
+      return {
+        time: time,
+        value: value,
+        index: index,
+        numKeys: numKeys,
+        resolveEffect: function resolveEffect(layerName, effectName, propertyName) {
+          var target = layerName === null ? thisLayer : thisComp.layer(layerName);
+          var resolved = target.effect(effectName)(propertyName);
+          return resolved && resolved.value !== undefined ? resolved.value : resolved;
+        },
+      };
+    }
+
+    function buildSandboxedExpression() {
+      var compiled;
+      try {
+        compiled = expressionSandbox.compile(val);
+      } catch (error) {
+        // The expression never runs; the property keeps its baked keyframes.
+        expressionSandbox.onExpressionDropped(val, error);
+        return null;
+      }
+      return function _sandboxed_expression_function() {
+        try {
+          scoped_bm_rt = compiled.evaluate(sandboxBindings());
+        } catch (error) {
+          expressionSandbox.onExpressionDropped(val, error);
+          scoped_bm_rt = value;
+        }
+      };
+    }
+
+    var expression_function;
+    if (expressionSandbox) {
+      expression_function = buildSandboxedExpression();
+      if (!expression_function) {
+        return noOp;
+      }
+    } else {
+      // val = val.replace(/(\\?"|')((http)(s)?(:\/))?\/.*?(\\?"|')/g, "\"\""); // deter potential network calls
+      expression_function = eval('[function _expression_function(){' + val + ';scoped_bm_rt=$bm_rt}]')[0]; // eslint-disable-line no-eval
+    }
     var numKeys = property.kf ? data.k.length : 0;
 
     var active = !this.data || this.data.hd !== true;
