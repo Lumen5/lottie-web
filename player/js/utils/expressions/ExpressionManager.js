@@ -437,40 +437,86 @@ const ExpressionManager = (function () {
 
     var scoped_bm_rt;
 
-    // The host may supply a sandbox that evaluates expressions in an isolated interpreter
-    // instead of eval. It is handed no reference to any object in this realm: the bindings
-    // below are read at call time and cross as copied values, and `resolveEffect` answers
-    // lookups by name rather than exposing the property graph itself.
+    // Evaluates expressions instead of eval, with no reference to anything in this realm.
     var expressionSandbox = elem.globalData.renderConfig.expressionSandbox;
 
-    function sandboxBindings() {
-      return {
-        time: time,
-        value: value,
-        index: index,
-        numKeys: numKeys,
-        resolveEffect: function resolveEffect(layerName, effectName, propertyName) {
-          var target = layerName === null ? thisLayer : thisComp.layer(layerName);
-          var resolved = target.effect(effectName)(propertyName);
-          return resolved && resolved.value !== undefined ? resolved.value : resolved;
-        },
-      };
+    function reportExpressionDropped(error) {
+      try {
+        if (expressionSandbox.onExpressionDropped) {
+          expressionSandbox.onExpressionDropped(val, error);
+        }
+      } catch (reportingError) {
+        // Host reporting must not break rendering.
+      }
     }
+
+    function isNumberArray(resolved) {
+      // Not Array.isArray: colours and positions are Float32Array.
+      if (typeof resolved.length !== 'number') {
+        return false;
+      }
+      return !Array.prototype.some.call(resolved, function (element) {
+        return typeof element !== 'number';
+      });
+    }
+
+    // Only primitives and number arrays cross. A live interface, effect function or
+    // ShapePath is refused so this side never relies on the sandbox filtering its ingress.
+    function toPlainValue(resolved) {
+      if (resolved === null || resolved === undefined) {
+        return undefined;
+      }
+      var resolvedType = typeof resolved;
+      if (resolvedType === 'number' || resolvedType === 'string' || resolvedType === 'boolean') {
+        return resolved;
+      }
+      if (resolvedType !== 'object' || !isNumberArray(resolved)) {
+        return undefined;
+      }
+      return Array.prototype.slice.call(resolved);
+    }
+
+    function resolveEffect(layerName, effectName, propertyName) {
+      var target = layerName === null ? thisLayer : thisComp.layer(layerName);
+      var resolved = target.effect(effectName)(propertyName);
+      var plain = toPlainValue(resolved && resolved.value !== undefined ? resolved.value : resolved);
+      if (plain === undefined) {
+        throw new Error('expression value for ' + effectName + ' is not a plain value');
+      }
+      return plain;
+    }
+
+    var sandboxBindings = {
+      time: 0,
+      value: null,
+      index: index,
+      numKeys: 0,
+      resolveEffect: resolveEffect,
+    };
 
     function buildSandboxedExpression() {
       var compiled;
       try {
         compiled = expressionSandbox.compile(val);
       } catch (error) {
-        // The expression never runs; the property keeps its baked keyframes.
-        expressionSandbox.onExpressionDropped(val, error);
+        reportExpressionDropped(error);
         return null;
       }
+      var dropped = false;
       return function _sandboxed_expression_function() {
+        if (dropped) {
+          scoped_bm_rt = value;
+          return;
+        }
+        sandboxBindings.time = time;
+        sandboxBindings.value = value;
+        sandboxBindings.numKeys = numKeys;
         try {
-          scoped_bm_rt = compiled.evaluate(sandboxBindings());
+          scoped_bm_rt = compiled.evaluate(sandboxBindings);
         } catch (error) {
-          expressionSandbox.onExpressionDropped(val, error);
+          // Fails once, fails every frame: stop paying for it.
+          dropped = true;
+          reportExpressionDropped(error);
           scoped_bm_rt = value;
         }
       };
