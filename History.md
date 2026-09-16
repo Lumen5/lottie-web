@@ -1,3 +1,7 @@
+## V 5.16.0
+- FEATURE: optional rendererSettings.expressionSandbox, to evaluate expressions in a host-supplied interpreter instead of eval
+- IMPROVEMENT: build/player is generated at pack time rather than committed
+
 ## V 5.13.0
 - FIX: rollup config updated to prevent lottie-web from running in Server-Side Rendering contexts
 - FIX: fixed renderGradient() cache invalidation issue so that both start and end points are checked for changes
