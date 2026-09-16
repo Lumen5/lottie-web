@@ -1,3 +1,7 @@
+## V 5.17.0
+- BREAKING: ExpressionSandbox.resolveEffect is replaced by resolve(path), which walks the property graph from a list of [step, argument] pairs
+- FEATURE: expression sandboxes can resolve comp(), chained content(), layer transform properties, loopIn/loopOut and toComp/fromComp/toWorld/fromWorld
+
 ## V 5.16.0
 - FEATURE: optional rendererSettings.expressionSandbox, to evaluate expressions in a host-supplied interpreter instead of eval
 - IMPROVEMENT: build/player is generated at pack time rather than committed
