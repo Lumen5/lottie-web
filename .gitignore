@@ -12,5 +12,6 @@ debug.txt
 screenshots/compare/
 
 # rollup output; rebuilt by the prepare script before pack/publish.
-# build/extension and build/old_parser are NOT generated and stay tracked.
-build/player/
+# build/extension, build/old_parser and the .d.ts stubs are hand-written, not generated.
+build/player/*
+!build/player/*.d.ts
