@@ -96,9 +96,51 @@ export type AnimationItem = {
     removeEventListener<T extends AnimationEventName>(name: T, callback?: AnimationEventCallback<AnimationEvents[T]>): void;
 }
 
+/** Host values for the frame being rendered. */
+export type ExpressionBindings = {
+    /** Seconds into the composition. */
+    time: number;
+    /** The property's own interpolated keyframe value for this frame. */
+    value: unknown;
+    index: number;
+    /** Keyframes on this property; 0 when it is not animated. */
+    numKeys: number;
+    /**
+     * Resolves `thisComp.layer(layerName).effect(effectName)(propertyName)`, where a null
+     * layerName means the expression's own layer. Returns a number, string, boolean or
+     * number array, and throws for a shape, mask or property group.
+     */
+    resolveEffect(layerName: string | null, effectName: string, propertyName: string): unknown;
+};
+
+export type CompiledExpression = {
+    /** Returns the value assigned to `$bm_rt`. Throwing drops the expression. */
+    evaluate(bindings: ExpressionBindings): unknown;
+};
+
+/**
+ * Evaluates expressions in place of `eval`, with no reference to any object in the player.
+ * Supplied per `loadAnimation`, so every call site handling untrusted data must pass it.
+ *
+ * Two requirements are not visible in the source handed to an implementation: `evaluate`
+ * must return the `$bm_rt` variable rather than the source's completion value, and the
+ * implementation must provide `thisComp.layer(x).effect(y)(z)` itself and route it to
+ * `resolveEffect`, which nothing else calls.
+ *
+ * A dropped expression keeps its baked keyframes, reports once, and is not retried.
+ */
+export type ExpressionSandbox = {
+    compile(source: string): CompiledExpression;
+    /** Must not throw; a throwing reporter is swallowed rather than failing the frame. */
+    onExpressionDropped?(source: string, error: unknown): void;
+};
+
 export type BaseRendererConfig = {
     imagePreserveAspectRatio?: string;
     className?: string;
+    /** Set false to ignore expressions entirely and use the baked keyframes. */
+    runExpressions?: boolean;
+    expressionSandbox?: ExpressionSandbox | null;
 };
 
 export type SVGRendererConfig = BaseRendererConfig & {

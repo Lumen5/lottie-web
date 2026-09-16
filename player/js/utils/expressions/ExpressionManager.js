@@ -436,8 +436,102 @@ const ExpressionManager = (function () {
     var velocityAtTime;
 
     var scoped_bm_rt;
-    // val = val.replace(/(\\?"|')((http)(s)?(:\/))?\/.*?(\\?"|')/g, "\"\""); // deter potential network calls
-    var expression_function = eval('[function _expression_function(){' + val + ';scoped_bm_rt=$bm_rt}]')[0]; // eslint-disable-line no-eval
+
+    // Evaluates expressions instead of eval, with no reference to anything in this realm.
+    var expressionSandbox = elem.globalData.renderConfig.expressionSandbox;
+
+    function reportExpressionDropped(error) {
+      try {
+        if (expressionSandbox.onExpressionDropped) {
+          expressionSandbox.onExpressionDropped(val, error);
+        }
+      } catch (reportingError) {
+        // Host reporting must not break rendering.
+      }
+    }
+
+    function isNumberArray(resolved) {
+      // Not Array.isArray: colours and positions are Float32Array.
+      if (typeof resolved.length !== 'number') {
+        return false;
+      }
+      return !Array.prototype.some.call(resolved, function (element) {
+        return typeof element !== 'number';
+      });
+    }
+
+    // Only primitives and number arrays cross. A live interface, effect function or
+    // ShapePath is refused so this side never relies on the sandbox filtering its ingress.
+    function toPlainValue(resolved) {
+      if (resolved === null || resolved === undefined) {
+        return undefined;
+      }
+      var resolvedType = typeof resolved;
+      if (resolvedType === 'number' || resolvedType === 'string' || resolvedType === 'boolean') {
+        return resolved;
+      }
+      if (resolvedType !== 'object' || !isNumberArray(resolved)) {
+        return undefined;
+      }
+      return Array.prototype.slice.call(resolved);
+    }
+
+    function resolveEffect(layerName, effectName, propertyName) {
+      var target = layerName === null ? thisLayer : thisComp.layer(layerName);
+      var resolved = target.effect(effectName)(propertyName);
+      var plain = toPlainValue(resolved && resolved.value !== undefined ? resolved.value : resolved);
+      if (plain === undefined) {
+        throw new Error('expression value for ' + effectName + ' is not a plain value');
+      }
+      return plain;
+    }
+
+    var sandboxBindings = {
+      time: 0,
+      value: null,
+      index: index,
+      numKeys: 0,
+      resolveEffect: resolveEffect,
+    };
+
+    function buildSandboxedExpression() {
+      var compiled;
+      try {
+        compiled = expressionSandbox.compile(val);
+      } catch (error) {
+        reportExpressionDropped(error);
+        return null;
+      }
+      var dropped = false;
+      return function _sandboxed_expression_function() {
+        if (dropped) {
+          scoped_bm_rt = value;
+          return;
+        }
+        sandboxBindings.time = time;
+        sandboxBindings.value = value;
+        sandboxBindings.numKeys = numKeys;
+        try {
+          scoped_bm_rt = compiled.evaluate(sandboxBindings);
+        } catch (error) {
+          // Fails once, fails every frame: stop paying for it.
+          dropped = true;
+          reportExpressionDropped(error);
+          scoped_bm_rt = value;
+        }
+      };
+    }
+
+    var expression_function;
+    if (expressionSandbox) {
+      expression_function = buildSandboxedExpression();
+      if (!expression_function) {
+        return noOp;
+      }
+    } else {
+      // val = val.replace(/(\\?"|')((http)(s)?(:\/))?\/.*?(\\?"|')/g, "\"\""); // deter potential network calls
+      expression_function = eval('[function _expression_function(){' + val + ';scoped_bm_rt=$bm_rt}]')[0]; // eslint-disable-line no-eval
+    }
     var numKeys = property.kf ? data.k.length : 0;
 
     var active = !this.data || this.data.hd !== true;

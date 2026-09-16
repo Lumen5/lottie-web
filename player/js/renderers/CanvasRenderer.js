@@ -20,6 +20,7 @@ function CanvasRenderer(animationItem, config) {
     id: (config && config.id) || '',
     bufferManager: bufferManager,
     runExpressions: !config || config.runExpressions === undefined || config.runExpressions,
+    expressionSandbox: (config && config.expressionSandbox) || null,
   };
   this.renderConfig.dpr = (config && config.dpr) || 1;
   if (this.animationItem.wrapper) {
