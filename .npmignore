@@ -3,10 +3,13 @@ player/exports/
 player/tests/
 node_modules/
 tests/
+demo/
 esprima/
 bodymovinCert.p12
 ZXPSignCmd.exe
 signer.bat
-commands.txt
-debug.txt
-screenshots/compare/
+gifs/
+build/extension/
+projects/
+screenshots/
+test/
