@@ -476,12 +476,56 @@ const ExpressionManager = (function () {
       return Array.prototype.slice.call(resolved);
     }
 
-    function resolveEffect(layerName, effectName, propertyName) {
-      var target = layerName === null ? thisLayer : thisComp.layer(layerName);
-      var resolved = target.effect(effectName)(propertyName);
-      var plain = toPlainValue(resolved && resolved.value !== undefined ? resolved.value : resolved);
+    // Walks the property graph host-side from a list of [step, argument] pairs, so the
+    // sandbox names what it wants instead of holding anything. One entry point keeps the
+    // reachable surface, and the single toPlainValue gate on the way out, auditable.
+    function walkStep(target, step, argument) {
+      switch (step) {
+        case 'comp': return comp(argument);
+        case 'layer': return argument === null ? thisLayer : target.layer(argument);
+        case 'effect': return target.effect(argument);
+        case 'content': return target.content(argument);
+        case 'transform': return target('ADBE Transform Group');
+        case 'prop': return target[argument] !== undefined ? target[argument] : target(argument);
+        default: throw new Error('unknown resolve step ' + step);
+      }
+    }
+
+    function resolve(path) {
+      var target = thisComp;
+      for (var i = 0; i < path.length; i += 1) {
+        target = walkStep(target, path[i][0], path[i][1]);
+        if (target === undefined || target === null) {
+          throw new Error('expression path is not resolvable at step ' + path[i][0]);
+        }
+      }
+      var plain = toPlainValue(target && target.value !== undefined ? target.value : target);
       if (plain === undefined) {
-        throw new Error('expression value for ' + effectName + ' is not a plain value');
+        throw new Error('expression path did not resolve to a plain value');
+      }
+      return plain;
+    }
+
+    function resolveLoop(kind, type, duration) {
+      var fn = kind === 'in' ? loopIn : loopOut;
+      if (!fn) {
+        throw new Error('property does not support ' + kind);
+      }
+      var plain = toPlainValue(fn(type, duration, false));
+      if (plain === undefined) {
+        throw new Error('loop did not resolve to a plain value');
+      }
+      return plain;
+    }
+
+    function resolvePoint(kind, point) {
+      var fn = thisLayer[kind];
+      if (!fn) {
+        throw new Error('layer does not support ' + kind);
+      }
+      var plain = toPlainValue(fn(point));
+      if (plain === undefined) {
+        throw new Error(kind + ' did not resolve to a plain value');
       }
       return plain;
     }
@@ -491,7 +535,9 @@ const ExpressionManager = (function () {
       value: null,
       index: index,
       numKeys: 0,
-      resolveEffect: resolveEffect,
+      resolve: resolve,
+      resolveLoop: resolveLoop,
+      resolvePoint: resolvePoint,
     };
 
     function buildSandboxedExpression() {
