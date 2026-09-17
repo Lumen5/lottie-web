@@ -96,45 +96,54 @@ export type AnimationItem = {
     removeEventListener<T extends AnimationEventName>(name: T, callback?: AnimationEventCallback<AnimationEvents[T]>): void;
 }
 
+/** A name a `call` step may invoke on whatever the path has reached. */
+export type ExpressionCallable =
+    | 'propertyGroup'
+    | 'getValueAtTime' | 'getVelocityAtTime' | 'smooth'
+    | 'loopIn' | 'loopOut'
+    | 'toComp' | 'fromComp' | 'toWorld' | 'fromWorld'
+    | 'points' | 'inTangents' | 'outTangents' | 'isClosed'
+    | 'pointOnPath' | 'tangentOnPath'
+    /** These three read the expression's own property and ignore the walked target. */
+    | 'nearestKey' | 'key' | 'wiggle';
+
 /**
  * One step of a lookup: a step name and its argument. The player walks these itself, so
- * the sandbox names what it wants rather than holding anything. There are five steps.
+ * the sandbox names what it wants rather than holding anything. A path starts at
+ * `thisComp`; `comp`, `self` and a null `layer` re-root it.
  *
- * A path starts at `thisComp`; the first three re-root it.
+ * Where a number is allowed it is the After Effects index — `effect(1)` — matched against
+ * the interface, not an array subscript.
  *
- * - `['comp', name]`      another composition, by name
- * - `['self', null]`      the property the expression belongs to
- * - `['layer', name]`     a layer of the current composition; a null argument means the
- *                         layer the expression belongs to
- * - `['prop', name]`      a property of whatever the path has reached. Own properties
- *                         only — an inherited read is refused, which is what keeps
- *                         `constructor`, and through it the global object, out of reach.
- *                         `maskPath` and `maskOpacity` are the two exceptions, being the
- *                         only accessors in the interface surface defined on a prototype.
- *                         If the target is callable and has no such own property it is
- *                         invoked with the name, which is how After Effects names most
- *                         things (`['prop', 'ADBE Transform Group']`).
- * - `['call', [name, …args]]`
- *                         invoke a method on whatever the path has reached, with plain
- *                         arguments. Invoked on that target, so a lookup such as
- *                         `toComp` applies to the layer the path named rather than to the
- *                         expression's own. Only these names are callable:
- *
- *                           layer, effect, content, mask, propertyGroup,
- *                           getValueAtTime, getVelocityAtTime, smooth,
- *                           loopIn, loopOut,
- *                           toComp, fromComp, toWorld, fromWorld,
- *                           points, inTangents, outTangents, isClosed,
- *                           pointOnPath, tangentOnPath,
- *                           nearestKey, key, wiggle
- *
- *                         The last three read the expression's own property and ignore
- *                         the walked target.
- *
- * Between the callable list and the own-property rule, the whole reachable surface is
- * two lists of names.
+ * Between the callable list and the own-property rule on `prop`, the whole reachable
+ * surface is two lists of names, whatever an expression asks for.
  */
-export type ExpressionStep = [string, unknown];
+export type ExpressionStep =
+    /** Another composition, by name. */
+    | ['comp', string]
+    /** The property the expression belongs to. */
+    | ['self', null]
+    /** A layer of the current composition; null means the expression's own layer. */
+    | ['layer', string | number | null]
+    // Navigation. Steps of their own rather than calls, because these four carry nearly
+    // every lookup and the nested `call` shape costs more to marshal.
+    | ['effect', string | number]
+    | ['content', string | number]
+    | ['mask', string]
+    /**
+     * A property of whatever the path has reached. Own properties only — an inherited read
+     * is refused, which is what keeps `constructor`, and through it the global object, out
+     * of reach. `maskPath` and `maskOpacity` are exempt, being the only accessors in the
+     * interface surface defined on a prototype. If the target is callable and has no such
+     * own property it is invoked with the name, which is how After Effects names most
+     * things (`['prop', 'ADBE Transform Group']`).
+     */
+    | ['prop', string | number]
+    /**
+     * Invoke a method with plain arguments, on the target the path reached — so `toComp`
+     * applies to the layer the path named rather than to the expression's own.
+     */
+    | ['call', [ExpressionCallable, ...unknown[]]];
 
 export type ShapeDescriptor = {
     __shape: {
@@ -158,15 +167,21 @@ export type ExpressionBindings = {
     index: number;
     /** Keyframes on this property; 0 when it is not animated. */
     numKeys: number;
-    /** Text selector position; only meaningful on a text animator selector. */
-    textIndex: number;
-    textTotal: number;
-    selectorValue: number;
+    /** Text selector position; undefined off a text animator selector, as it is for eval. */
+    textIndex: number | undefined;
+    textTotal: number | undefined;
+    selectorValue: number | undefined;
     /**
      * Walks `path` and returns what it reaches, as a number, string, boolean, number
-     * array, or array of number arrays. Throws if the path cannot be walked, or reaches
-     * something that is not one of those — a live interface, an effect function or a
-     * property group never crosses.
+     * array, array of number arrays, or a ShapeDescriptor for a path. Throws if the path
+     * cannot be walked, or reaches something that is not one of those — a live interface,
+     * an effect function or a property group never crosses.
+     *
+     * A host must tell the two failures apart. A message containing `did not resolve to a
+     * plain value` means the path is walkable but has not reached a value yet, so a step
+     * may be appended (`.dash`, then `.gap`). Any other error is real — an out-of-range
+     * `key(n)`, a missing layer — and must reach the expression's own try/catch, which
+     * bodymovin output relies on.
      */
     resolve(path: ExpressionStep[]): unknown;
 };
@@ -190,10 +205,10 @@ export type CompiledExpression = {
  * walk and the value gate, and nothing else.
  *
  * A dropped expression keeps its baked keyframes, reports once, and is not retried. Note
- * that bodymovin wraps many expressions in their own try/catch: when a lookup the sandbox
- * cannot express is thrown inside one, the expression's own handler swallows it and the
- * property renders its baked value without `onExpressionDropped` ever firing. Drop counts
- * therefore understate divergence; compare rendered output to measure coverage.
+ * that bodymovin wraps many expressions in a try/catch of their own, which swallows a
+ * throw from inside `evaluate` before the player sees it: the property then renders its
+ * baked value and `onExpressionDropped` never fires. Drop counts therefore understate
+ * divergence, and only rendered output measures coverage.
  */
 export type ExpressionSandbox = {
     compile(source: string): CompiledExpression;
