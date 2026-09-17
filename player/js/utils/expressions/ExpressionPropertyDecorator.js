@@ -85,7 +85,7 @@ function addPropertyDecorator() {
   }
 
   function loopIn(type, duration, durationFlag) {
-    if (!this.k) {
+    if (!this.k || !this.keyframes) {
       return this.pv;
     }
     type = type ? type.toLowerCase() : '';

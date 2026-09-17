@@ -1,6 +1,11 @@
 ## V 5.17.0
 - BREAKING: ExpressionSandbox.resolveEffect is replaced by resolve(path), which walks the property graph from a list of [step, argument] pairs
-- FEATURE: expression sandboxes can resolve comp(), chained content(), layer transform properties, loopIn/loopOut and toComp/fromComp/toWorld/fromWorld
+- FEATURE: five steps - comp, self, layer, prop and call - reach comps, masks, shape paths, keyframe and time lookups, loops and layer-space transforms; the reachable surface is one list of callable names plus an own-property rule
+- FEATURE: a path-valued expression can return a ShapeDescriptor of plain arrays, which the player rebuilds
+- FIX: the prop step reads own properties only; an inherited read could reach the Function constructor and from there the global object
+- FIX: calls are invoked on the target the path reached, so toComp/fromComp/toWorld/fromWorld no longer throw on an undefined receiver
+- FIX: loopIn no longer throws on a property with no keyframes, matching loopOut
+- IMPROVEMENT: sandbox values are converted without Array.prototype.some/slice on typed arrays, cutting the cost of an array-valued lookup by about two thirds
 
 ## V 5.16.0
 - FEATURE: optional rendererSettings.expressionSandbox, to evaluate expressions in a host-supplied interpreter instead of eval

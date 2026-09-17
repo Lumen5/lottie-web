@@ -450,19 +450,11 @@ const ExpressionManager = (function () {
       }
     }
 
-    function isNumberArray(resolved) {
-      // Not Array.isArray: colours and positions are Float32Array.
-      if (typeof resolved.length !== 'number') {
-        return false;
-      }
-      return !Array.prototype.some.call(resolved, function (element) {
-        return typeof element !== 'number';
-      });
-    }
-
     // Only primitives and number arrays cross. A live interface, effect function or
     // ShapePath is refused so this side never relies on the sandbox filtering its ingress.
-    function toPlainValue(resolved) {
+    // One level of nesting is allowed, because points() and inTangents() are arrays of
+    // [x, y] pairs; anything deeper is refused so the gate keeps a fixed shape.
+    function toPlain(resolved, depth) {
       if (resolved === null || resolved === undefined) {
         return undefined;
       }
@@ -470,10 +462,97 @@ const ExpressionManager = (function () {
       if (resolvedType === 'number' || resolvedType === 'string' || resolvedType === 'boolean') {
         return resolved;
       }
-      if (resolvedType !== 'object' || !isNumberArray(resolved)) {
+      if (resolvedType !== 'object') {
         return undefined;
       }
-      return Array.prototype.slice.call(resolved);
+      var len = resolved.length;
+      if (typeof len !== 'number') {
+        return undefined;
+      }
+      // A manual loop rather than Array.prototype.some/slice: these run on Float32Array
+      // on every array-valued lookup, and the generic versions dominate the cost.
+      var out = new Array(len);
+      for (var i = 0; i < len; i += 1) {
+        var element = resolved[i];
+        if (typeof element === 'number') {
+          out[i] = element;
+        } else {
+          if (depth >= 1) {
+            return undefined;
+          }
+          var nested = toPlain(element, depth + 1);
+          if (nested === undefined) {
+            return undefined;
+          }
+          out[i] = nested;
+        }
+      }
+      return out;
+    }
+
+    function toPlainValue(resolved) {
+      return toPlain(resolved, 0);
+    }
+
+    // The one value that cannot cross as plain data is a path. The sandbox describes it
+    // with plain arrays and the player builds it, so no ShapePath ever leaves this scope.
+    function fromPlainValue(produced) {
+      if (produced && typeof produced === 'object' && produced.__shape) {
+        var shape = produced.__shape;
+        return createPath(shape.v || [], shape.i || null, shape.o || null, !!shape.c);
+      }
+      return produced;
+    }
+
+    // The reachable surface, as two lists. CALLABLE is every method a path may invoke on
+    // whatever it walked to; INHERITED_OK is the two accessors in the interface surface
+    // defined on a prototype rather than an instance, which readProp would otherwise
+    // refuse. Delimited strings rather than objects, so no key can collide with anything
+    // on Object.prototype.
+    var CALLABLE = '|layer|effect|content|mask|propertyGroup|getValueAtTime'
+      + '|getVelocityAtTime|smooth|loopIn|loopOut|toComp|fromComp|toWorld|fromWorld'
+      + '|points|inTangents|outTangents|isClosed|pointOnPath|tangentOnPath|';
+    var INHERITED_OK = '|maskPath|maskOpacity|';
+
+    function listed(list, entry) {
+      return typeof entry === 'string' && list.indexOf('|' + entry + '|') !== -1;
+    }
+
+    // Inherited reads are otherwise refused. `constructor` is the one that matters:
+    // reaching it turns a comp or layer interface into the Function constructor, and three
+    // more steps from there reach the global object. An own-property check closes that by
+    // construction, where a denylist would only postpone it.
+    function readProp(target, argument) {
+      if (target !== null && target !== undefined
+          && Object.prototype.hasOwnProperty.call(target, argument)) {
+        return target[argument];
+      }
+      if (listed(INHERITED_OK, argument)) {
+        return target[argument];
+      }
+      // The interfaces are callable, and that is how After Effects names most things.
+      if (typeof target === 'function') {
+        return target(argument);
+      }
+      throw new Error('unreadable property ' + argument);
+    }
+
+    // Invoked on the walked target, so `this` is whatever the path reached. That is what
+    // makes toComp and friends work on any layer a path names rather than only this one.
+    function callStep(target, args) {
+      var fnName = args[0];
+      // These three close over this property's own keyframes and value; they are not
+      // methods on anything the path can reach.
+      if (fnName === 'nearestKey') { return nearestKey(args[1]); }
+      if (fnName === 'key') { return key(args[1]); }
+      if (fnName === 'wiggle') { return wiggle(args[1], args[2]); }
+      if (!listed(CALLABLE, fnName)) {
+        throw new Error('refused call ' + fnName);
+      }
+      if (!target || typeof target[fnName] !== 'function') {
+        throw new Error('no ' + fnName + ' on this target');
+      }
+      return target[fnName].apply(target, args.slice(1));
     }
 
     // Walks the property graph host-side from a list of [step, argument] pairs, so the
@@ -481,12 +560,14 @@ const ExpressionManager = (function () {
     // reachable surface, and the single toPlainValue gate on the way out, auditable.
     function walkStep(target, step, argument) {
       switch (step) {
+        // Roots. A path starts at thisComp; these re-root it.
         case 'comp': return comp(argument);
+        case 'self': return thisProperty;
         case 'layer': return argument === null ? thisLayer : target.layer(argument);
-        case 'effect': return target.effect(argument);
-        case 'content': return target.content(argument);
-        case 'transform': return target('ADBE Transform Group');
-        case 'prop': return target[argument] !== undefined ? target[argument] : target(argument);
+
+        case 'prop': return readProp(target, argument);
+        case 'call': return callStep(target, argument);
+
         default: throw new Error('unknown resolve step ' + step);
       }
     }
@@ -506,38 +587,16 @@ const ExpressionManager = (function () {
       return plain;
     }
 
-    function resolveLoop(kind, type, duration) {
-      var fn = kind === 'in' ? loopIn : loopOut;
-      if (!fn) {
-        throw new Error('property does not support ' + kind);
-      }
-      var plain = toPlainValue(fn(type, duration, false));
-      if (plain === undefined) {
-        throw new Error('loop did not resolve to a plain value');
-      }
-      return plain;
-    }
-
-    function resolvePoint(kind, point) {
-      var fn = thisLayer[kind];
-      if (!fn) {
-        throw new Error('layer does not support ' + kind);
-      }
-      var plain = toPlainValue(fn(point));
-      if (plain === undefined) {
-        throw new Error(kind + ' did not resolve to a plain value');
-      }
-      return plain;
-    }
-
     var sandboxBindings = {
       time: 0,
       value: null,
       index: index,
       numKeys: 0,
+      // Only meaningful on a text selector; undefined elsewhere, as they are for eval.
+      textIndex: 0,
+      textTotal: 0,
+      selectorValue: 0,
       resolve: resolve,
-      resolveLoop: resolveLoop,
-      resolvePoint: resolvePoint,
     };
 
     function buildSandboxedExpression() {
@@ -557,8 +616,11 @@ const ExpressionManager = (function () {
         sandboxBindings.time = time;
         sandboxBindings.value = value;
         sandboxBindings.numKeys = numKeys;
+        sandboxBindings.textIndex = textIndex;
+        sandboxBindings.textTotal = textTotal;
+        sandboxBindings.selectorValue = selectorValue;
         try {
-          scoped_bm_rt = compiled.evaluate(sandboxBindings);
+          scoped_bm_rt = fromPlainValue(compiled.evaluate(sandboxBindings));
         } catch (error) {
           // Fails once, fails every frame: stop paying for it.
           dropped = true;
