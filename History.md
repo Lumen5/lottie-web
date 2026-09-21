@@ -1,3 +1,6 @@
+## V 5.17.1
+- FIX: an animated path property's own value reached a sandbox as undefined, and the expression returned that without throwing, so the property rendered from it rather than dropping to its keyframes; it crosses as a ShapeDescriptor now, like a resolved path
+
 ## V 5.17.0
 - BREAKING: ExpressionSandbox.resolveEffect is replaced by resolve(path), which walks the property graph from a list of [step, argument] pairs and reaches comps, layers, masks, shape paths, keyframe and time lookups, loops and layer-space transforms; reads are own-property only, so an inherited read can no longer reach the Function constructor and from there the global object, calls are invoked on the target the path reached, a path-valued read crosses as a ShapeDescriptor of plain arrays, and the per-frame bindings carry index; separately, loopIn no longer throws on a property with no keyframes, matching loopOut
 

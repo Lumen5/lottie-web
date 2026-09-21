@@ -633,7 +633,7 @@ const ExpressionManager = (function () {
           return;
         }
         sandboxBindings.time = time;
-        sandboxBindings.value = value;
+        sandboxBindings.value = isShapePath(value) ? shapeToPlain(value) : value;
         sandboxBindings.index = index;
         sandboxBindings.numKeys = numKeys;
         sandboxBindings.textIndex = textIndex;
