@@ -633,7 +633,12 @@ const ExpressionManager = (function () {
           return;
         }
         sandboxBindings.time = time;
-        sandboxBindings.value = value;
+        // An animated path property's value is a ShapePath, which is not plain data: passed
+        // as-is it arrived undefined, and the expression then returned undefined without
+        // throwing, so the property rendered from that rather than dropping to its
+        // keyframes. It crosses as the same descriptor a resolved path does. A static path
+        // is already the plain { i, o, v, c } of the file and needs nothing.
+        sandboxBindings.value = isShapePath(value) ? shapeToPlain(value) : value;
         sandboxBindings.index = index;
         sandboxBindings.numKeys = numKeys;
         sandboxBindings.textIndex = textIndex;
